@@ -157,3 +157,13 @@ def init_db() -> None:
                 due_date TEXT
             )
         """)
+
+        # Todos v2 migration: add audit/carryover columns
+        for col, definition in [
+            ("created_at", "TEXT"),
+            ("fulfilled_at", "TEXT"),
+            ("source_day", "TEXT"),
+        ]:
+            cursor.execute("PRAGMA table_info(todos)")
+            if not any(r[1] == col for r in cursor.fetchall()):
+                cursor.execute(f"ALTER TABLE todos ADD COLUMN {col} {definition}")

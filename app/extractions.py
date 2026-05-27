@@ -5,6 +5,7 @@ the same `day` before calling this — keeping write-side idempotency at the
 call site, not here.
 """
 import json
+from datetime import datetime
 
 from .db import connect
 from .models import JournalParserResponse
@@ -60,6 +61,6 @@ def store_extractions(parsed: JournalParserResponse, day: str) -> None:
 
         for t in parsed.todos:
             cursor.execute("""
-                INSERT INTO todos (day, task_description, due_date)
-                VALUES (?, ?, ?)
-            """, (day, t.task, t.due_date))
+                INSERT INTO todos (day, task_description, due_date, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (day, t.task, t.due_date, datetime.now().isoformat()))

@@ -38,6 +38,26 @@ def _format_batch_prompt(messages: List[dict]) -> str:
     return "\n".join(parts)
 
 
+def carryover_unfilled_todos(from_day: str, to_day: str) -> int:
+    """Copy unfilled todos from from_day into to_day as new rows.
+    Idempotent: skips if any rows with source_day=from_day already exist in to_day."""
+    with connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM todos WHERE day = ? AND source_day = ?",
+            (to_day, from_day),
+        )
+        if cursor.fetchone()[0] > 0:
+            return 0
+        cursor.execute("""
+            INSERT INTO todos (day, task_description, is_completed, due_date, created_at, source_day)
+            SELECT ?, task_description, 0, due_date, ?, ?
+            FROM todos
+            WHERE day = ? AND is_completed = 0
+        """, (to_day, datetime.now().isoformat(), from_day, from_day))
+        return cursor.rowcount
+
+
 def _mark_parse_log(day: str, status: str, error: str = None) -> None:
     with connect() as conn:
         cursor = conn.cursor()
@@ -112,11 +132,19 @@ def backfill_all_message_days() -> int:
 
 
 def run_scheduled_batch() -> None:
-    """Cron entrypoint. Parses yesterday's bucket — the one that just ended."""
+    """Cron entrypoint. Parses yesterday's bucket then carries over unfilled todos."""
     yesterday = (current_bucket() - timedelta(days=1)).isoformat()
+    today = current_bucket().isoformat()
     try:
         parse_day(yesterday)
         print(f"[batch] scheduled parse complete for {yesterday}")
     except Exception:
         print(f"[batch] scheduled parse failed for {yesterday}")
+        traceback.print_exc()
+    try:
+        n = carryover_unfilled_todos(yesterday, today)
+        if n:
+            print(f"[batch] carried over {n} unfilled todo(s) from {yesterday} to {today}")
+    except Exception:
+        print(f"[batch] carryover failed")
         traceback.print_exc()

@@ -46,6 +46,15 @@ const bucketKey = (t) => {
   return `${y}-${m}-${day}`;
 };
 
+const isoAddDays = (iso, n) => {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 const conversationPreview = (c) => {
   if (c.first_user_message) {
     const s = c.first_user_message.trim().replace(/\s+/g, ' ');
@@ -71,7 +80,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
-  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], todos: [] });
+  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], todos: {} });
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -391,44 +400,289 @@ function TypingDots() {
 }
 
 function DashboardView({ data }) {
-  const { emotional, health, productivity, events, todos } = data;
+  const { emotional, health, productivity, events, todos: initialTodos } = data;
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-7">
-      <div className="max-w-6xl mx-auto space-y-7">
-        <header>
-          <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Last 7 days across the four tracked domains. Today's chat populates after the overnight parse.
-          </p>
-        </header>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-8">
-          <EmotionalPanel rows={emotional} />
-          <HealthPanel rows={health} />
-          <ProductivityPanel rows={productivity} />
-          <EventsPanel rows={events} />
-        </div>
-
-        <TodosStrip rows={todos} />
+    <div className="flex-1 overflow-y-auto px-8 py-7 space-y-8">
+      <div className="max-w-5xl mx-auto space-y-8">
+        <TodoPanel initialTodos={initialTodos} />
+        <WeeklySummary emotional={emotional} health={health} productivity={productivity} events={events} />
       </div>
     </div>
   );
 }
 
-function PanelShell({ title, accent, count, children }) {
+function TodoPanel({ initialTodos }) {
+  const todayBucket = bucketKey(new Date());
+  const [selectedDay, setSelectedDay] = useState(todayBucket);
+  const [todosByDay, setTodosByDay] = useState(initialTodos || {});
+  const [addInput, setAddInput] = useState('');
+  const [hoveredId, setHoveredId] = useState(null);
+
+  useEffect(() => {
+    if (todosByDay[selectedDay] !== undefined) return;
+    (async () => {
+      const res = await fetch(`${API}/api/todos/${selectedDay}`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      setTodosByDay(prev => ({ ...prev, [selectedDay]: rows }));
+    })();
+  }, [selectedDay, todosByDay]);
+
+  const todosForDay = todosByDay[selectedDay] ?? [];
+  const doneCount = todosForDay.filter(t => t.is_completed).length;
+
+  const navigate = (delta) => setSelectedDay(prev => isoAddDays(prev, delta));
+
+  const toggle = async (todo) => {
+    const endpoint = todo.is_completed ? 'uncomplete' : 'complete';
+    const optimistic = { ...todo, is_completed: todo.is_completed ? 0 : 1, fulfilled_at: todo.is_completed ? null : new Date().toISOString() };
+    setTodosByDay(prev => ({
+      ...prev,
+      [selectedDay]: prev[selectedDay].map(t => t.id === todo.id ? optimistic : t),
+    }));
+    const res = await fetch(`${API}/api/todos/${todo.id}/${endpoint}`, { method: 'PATCH' });
+    if (!res.ok) {
+      setTodosByDay(prev => ({
+        ...prev,
+        [selectedDay]: prev[selectedDay].map(t => t.id === todo.id ? todo : t),
+      }));
+    }
+  };
+
+  const deleteTodo = async (todo) => {
+    setTodosByDay(prev => ({
+      ...prev,
+      [selectedDay]: prev[selectedDay].filter(t => t.id !== todo.id),
+    }));
+    const res = await fetch(`${API}/api/todos/${todo.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      setTodosByDay(prev => ({
+        ...prev,
+        [selectedDay]: [...(prev[selectedDay] || []), todo],
+      }));
+    }
+  };
+
+  const addTodo = async (e) => {
+    e.preventDefault();
+    const text = addInput.trim();
+    if (!text) return;
+    setAddInput('');
+    const res = await fetch(`${API}/api/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_description: text, day: selectedDay }),
+    });
+    if (!res.ok) return;
+    const created = await res.json();
+    setTodosByDay(prev => ({
+      ...prev,
+      [selectedDay]: [...(prev[selectedDay] || []), created],
+    }));
+  };
+
+  return (
+    <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate(-1)}
+            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 transition-colors text-sm"
+          >
+            ‹
+          </button>
+          <h2 className="text-sm font-semibold text-slate-900">
+            {dayLabel(selectedDay)}
+            <span className="ml-2 text-slate-400 font-normal text-xs">{selectedDay}</span>
+          </h2>
+          <button
+            onClick={() => navigate(1)}
+            disabled={selectedDay >= todayBucket}
+            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-500 transition-colors text-sm"
+          >
+            ›
+          </button>
+        </div>
+        <span className="text-xs text-slate-400">
+          {doneCount} / {todosForDay.length} done
+        </span>
+      </div>
+
+      <div className="space-y-1 min-h-[60px]">
+        {todosForDay.length === 0 && (
+          <p className="text-xs text-slate-400 py-3 text-center">No tasks for this day.</p>
+        )}
+        {todosForDay.map(todo => (
+          <div
+            key={todo.id}
+            className="flex items-start gap-3 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors group"
+            onMouseEnter={() => setHoveredId(todo.id)}
+            onMouseLeave={() => setHoveredId(null)}
+          >
+            <button
+              onClick={() => toggle(todo)}
+              className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
+                todo.is_completed
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'border-slate-300 hover:border-indigo-400'
+              }`}
+            >
+              {todo.is_completed && <span className="text-[10px] leading-none">✓</span>}
+            </button>
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm ${todo.is_completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                {todo.task_description}
+              </p>
+              <div className="flex gap-3 mt-0.5">
+                {todo.fulfilled_at && (
+                  <span className="text-[10px] text-emerald-600">
+                    done {new Date(todo.fulfilled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                {todo.due_date && !todo.fulfilled_at && (
+                  <span className="text-[10px] text-rose-500">due {todo.due_date}</span>
+                )}
+                {todo.source_day && (
+                  <span className="text-[10px] text-slate-400">carried from {todo.source_day}</span>
+                )}
+              </div>
+            </div>
+            {hoveredId === todo.id && (
+              <button
+                onClick={() => deleteTodo(todo)}
+                className="text-slate-300 hover:text-rose-500 text-sm transition-colors flex-shrink-0"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={addTodo} className="flex items-center gap-2 border-t border-slate-100 pt-3">
+        <input
+          type="text"
+          value={addInput}
+          onChange={e => setAddInput(e.target.value)}
+          placeholder="+ Add a task…"
+          className="flex-1 text-sm text-slate-700 placeholder-slate-400 bg-transparent outline-none"
+        />
+        <button
+          type="submit"
+          disabled={!addInput.trim()}
+          className="text-xs px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-md transition-colors"
+        >
+          Add
+        </button>
+      </form>
+    </section>
+  );
+}
+
+const SLEEP_MAP = { 'Poor': 0, 'Fair': 0.33, 'Good': 0.67, 'Excellent': 1 };
+const DIET_MAP = { 'Junk/Heavy': 0, 'Carbs Centered': 0.25, 'Meat and Vegetable centered': 0.6, 'Clean': 1 };
+
+function SparkPolyline({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+  const pts = days.map((d, i) => {
+    const v = byDay[d];
+    if (v == null) return null;
+    const x = (i / Math.max(days.length - 1, 1)) * W;
+    const y = H - ((v + 1) / 2) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).filter(Boolean);
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="#f1f5f9" strokeWidth="1" />
+      {pts.length >= 2 && (
+        <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+      )}
+      {pts.length < 2 && pts.map((p, i) => {
+        const [cx, cy] = p.split(',');
+        return <circle key={i} cx={cx} cy={cy} r="2" fill={color} />;
+      })}
+    </svg>
+  );
+}
+
+function SparkBars({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+  const vals = days.map(d => byDay[d] ?? null);
+  const maxVal = Math.max(...vals.filter(v => v != null), 1);
+  const bw = Math.max(1, W / days.length - 2);
+  return (
+    <svg width={W} height={H}>
+      {vals.map((v, i) => {
+        const barH = v != null ? Math.max(2, (v / maxVal) * H) : 0;
+        return (
+          <rect key={i} x={i * (W / days.length)} y={H - barH}
+            width={bw} height={barH} fill={v != null ? color : '#e2e8f0'} rx="1" />
+        );
+      })}
+    </svg>
+  );
+}
+
+function SparkDots({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+  return (
+    <svg width={W} height={H}>
+      {days.map((d, i) => {
+        const v = byDay[d];
+        const cx = (i + 0.5) * (W / days.length);
+        const cy = H / 2;
+        const r = v != null ? 3 + v * 4 : 2.5;
+        return <circle key={d} cx={cx} cy={cy} r={r} fill={v != null ? color : '#e2e8f0'} />;
+      })}
+    </svg>
+  );
+}
+
+function WeeklySummary({ emotional, health, productivity, events }) {
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  });
+
+  const emotByDay = Object.fromEntries(emotional.map(r => [r.day, r.valence]));
+  const sleepByDay = Object.fromEntries(health.filter(r => r.sleep_quality).map(r => [r.day, SLEEP_MAP[r.sleep_quality] ?? null]));
+  const exerciseByDay = Object.fromEntries(health.filter(r => r.exercise_type).map(r => [r.day, r.exercise_type !== 'None' ? 1 : 0]));
+  const dietByDay = Object.fromEntries(health.filter(r => r.diet_quality).map(r => [r.day, DIET_MAP[r.diet_quality] ?? null]));
+  const deepByDay = Object.fromEntries(productivity.filter(r => r.deep_work_hours != null).map(r => [r.day, r.deep_work_hours]));
+  const eventCountByDay = {};
+  events.forEach(e => { eventCountByDay[e.day] = (eventCountByDay[e.day] || 0) + 1; });
+
+  const avgValence = emotional.length ? (emotional.reduce((s, r) => s + r.valence, 0) / emotional.length).toFixed(2) : '—';
+  const sleepDays = health.filter(r => r.sleep_quality).length;
+  const exerciseDays = health.filter(r => r.exercise_type && r.exercise_type !== 'None').length;
+  const dietDays = health.filter(r => r.diet_quality).length;
+  const totalDeep = productivity.reduce((s, r) => s + (r.deep_work_hours || 0), 0).toFixed(1);
+  const totalEvents = events.length;
+
+  const cards = [
+    { title: 'Emotional', color: '#6366f1', stat: `avg ${avgValence > 0 ? '+' : ''}${avgValence}`, sparkline: <SparkPolyline days={last7} byDay={emotByDay} color="#6366f1" /> },
+    { title: 'Sleep', color: '#f43f5e', stat: `${sleepDays}/7 days`, sparkline: <SparkDots days={last7} byDay={sleepByDay} color="#f43f5e" /> },
+    { title: 'Exercise', color: '#10b981', stat: `${exerciseDays}/7 days`, sparkline: <SparkBars days={last7} byDay={exerciseByDay} color="#10b981" /> },
+    { title: 'Diet', color: '#f59e0b', stat: `${dietDays}/7 days`, sparkline: <SparkDots days={last7} byDay={dietByDay} color="#f59e0b" /> },
+    { title: 'Deep Work', color: '#3b82f6', stat: `${totalDeep}h total`, sparkline: <SparkBars days={last7} byDay={deepByDay} color="#3b82f6" /> },
+    { title: 'Events', color: '#8b5cf6', stat: `${totalEvents} total`, sparkline: <SparkBars days={last7} byDay={eventCountByDay} color="#8b5cf6" /> },
+  ];
+
   return (
     <section className="space-y-3">
-      <div className="flex items-baseline justify-between">
-        <h3 className="font-medium text-slate-900 text-sm flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${accent}`}></span>
-          {title}
-        </h3>
-        {count != null && (
-          <span className="text-xs text-slate-400">{count}</span>
-        )}
-      </div>
-      <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-        {children}
+      <h2 className="text-sm font-semibold text-slate-900">Past 7 Days</h2>
+      <div className="grid grid-cols-3 gap-3">
+        {cards.map(({ title, color, stat, sparkline }) => (
+          <div key={title} className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+              <span className="text-xs font-medium text-slate-700">{title}</span>
+            </div>
+            <div className="flex justify-center py-1">{sparkline}</div>
+            <p className="text-[11px] text-slate-500 text-center">{stat}</p>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -436,171 +690,6 @@ function PanelShell({ title, accent, count, children }) {
 
 function EmptyMsg({ children }) {
   return <p className="text-xs text-slate-400 py-1">{children}</p>;
-}
-
-function EmotionalPanel({ rows }) {
-  return (
-    <PanelShell title="Emotional" accent="bg-indigo-500" count={rows.length}>
-      {rows.length === 0 && <EmptyMsg>No emotional data yet — chat to start tracking.</EmptyMsg>}
-      {rows.slice(0, 8).map((r) => (
-        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${getQuadrantBadgeColor(r.primary_quadrant)}`}>
-              {r.primary_quadrant || '—'}
-            </span>
-            <span className="text-[10px] text-slate-400">{dayLabel(r.day)}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Bar label="Valence" value={r.valence} color="bg-indigo-500" />
-            <Bar label="Arousal" value={r.arousal} color="bg-pink-500" />
-          </div>
-          {r.cognitive_labels?.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {r.cognitive_labels.map((l, i) => (
-                <span key={i} className="text-[10px] bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded">#{l}</span>
-              ))}
-            </div>
-          )}
-          {r.cognitive_triggers?.length > 0 && (
-            <div className="text-[11px] text-slate-600">
-              <span className="text-slate-400">Triggers:</span> {r.cognitive_triggers.join(', ')}
-            </div>
-          )}
-          {r.social_interactions?.length > 0 && (
-            <div className="text-[11px] text-slate-600">
-              <span className="text-slate-400">Social:</span> {r.social_interactions.join(', ')}
-            </div>
-          )}
-        </div>
-      ))}
-    </PanelShell>
-  );
-}
-
-function Bar({ label, value, color }) {
-  const v = value ?? 0;
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-[10px] text-slate-400">
-        <span>{label}</span>
-        <span>{v.toFixed(2)}</span>
-      </div>
-      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-        <div className={`${color} h-full rounded-full`} style={{ width: `${((v + 1) * 50)}%` }}></div>
-      </div>
-    </div>
-  );
-}
-
-function HealthPanel({ rows }) {
-  return (
-    <PanelShell title="Health" accent="bg-rose-500" count={rows.length}>
-      {rows.length === 0 && <EmptyMsg>No health data yet.</EmptyMsg>}
-      {rows.slice(0, 8).map((r) => (
-        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
-          <div className="text-[10px] text-slate-400">{dayLabel(r.day)}</div>
-          <div className="flex flex-wrap gap-1.5">
-            {r.sleep_quality && <KV k="Sleep" v={r.sleep_quality} />}
-            {r.exercise_type && <KV k="Exercise" v={r.exercise_type} />}
-            {r.diet_quality && <KV k="Diet" v={r.diet_quality} />}
-            {r.physical_performance && <KV k="Perf" v={r.physical_performance} />}
-          </div>
-          {r.somatic_sensations?.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {r.somatic_sensations.map((s, i) => (
-                <span key={i} className="text-[10px] bg-rose-50 text-rose-700 border border-rose-200 px-1.5 py-0.5 rounded">{s}</span>
-              ))}
-            </div>
-          )}
-          {r.supplements?.length > 0 && (
-            <div className="text-[11px] text-slate-600">
-              <span className="text-slate-400">Supplements:</span> {r.supplements.join(', ')}
-            </div>
-          )}
-        </div>
-      ))}
-    </PanelShell>
-  );
-}
-
-function KV({ k, v }) {
-  return (
-    <span className="text-[10px] bg-white border border-slate-200 px-2 py-0.5 rounded">
-      <span className="text-slate-400">{k}:</span> <span className="text-slate-700 font-medium">{v}</span>
-    </span>
-  );
-}
-
-function ProductivityPanel({ rows }) {
-  const totals = rows.reduce((acc, r) => {
-    acc.deep += r.deep_work_hours || 0;
-    acc.shallow += r.shallow_work_hours || 0;
-    return acc;
-  }, { deep: 0, shallow: 0 });
-
-  return (
-    <PanelShell title="Productivity" accent="bg-emerald-500" count={rows.length}>
-      {rows.length === 0 && <EmptyMsg>No productivity data yet.</EmptyMsg>}
-      {rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-x-6 pb-2">
-          <div className="border-l-2 border-emerald-500 pl-3">
-            <div className="text-[10px] text-emerald-700">Deep (7d)</div>
-            <div className="text-xl font-semibold text-emerald-900">{totals.deep.toFixed(1)}h</div>
-          </div>
-          <div className="border-l-2 border-slate-300 pl-3">
-            <div className="text-[10px] text-slate-500">Shallow (7d)</div>
-            <div className="text-xl font-semibold text-slate-800">{totals.shallow.toFixed(1)}h</div>
-          </div>
-        </div>
-      )}
-      {rows.slice(0, 6).map((r) => (
-        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
-          <div className="text-[10px] text-slate-400">{dayLabel(r.day)}</div>
-          <div className="flex flex-wrap gap-1.5">
-            {r.deep_work_hours != null && <KV k="Deep" v={`${r.deep_work_hours}h`} />}
-            {r.shallow_work_hours != null && <KV k="Shallow" v={`${r.shallow_work_hours}h`} />}
-            {r.time_block_adherence && <KV k="Adherence" v={r.time_block_adherence} />}
-            {r.cognitive_load && <KV k="Load" v={r.cognitive_load} />}
-          </div>
-          {r.friction_points?.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {r.friction_points.map((f, i) => (
-                <span key={i} className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded">{f}</span>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </PanelShell>
-  );
-}
-
-function EventsPanel({ rows }) {
-  return (
-    <PanelShell title="Events" accent="bg-amber-500" count={rows.length}>
-      {rows.length === 0 && <EmptyMsg>No events captured yet.</EmptyMsg>}
-      {rows.map((e) => (
-        <div key={e.id} className="pb-3 border-b border-slate-100 last:border-0 space-y-1">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold text-slate-800">{e.title}</h4>
-            <span className={`text-[10px] px-2 py-0.5 rounded font-medium border ${eventTypeColor(e.event_type)}`}>
-              {e.event_type}
-            </span>
-          </div>
-          <p className="text-xs text-slate-600 leading-relaxed">{e.description}</p>
-          {e.tags && (
-            <div className="flex flex-wrap gap-1 pt-1">
-              {e.tags.split(',').filter(t => t.trim()).map((tag, i) => (
-                <span key={i} className="text-[9px] bg-white border border-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-mono">
-                  {tag.trim()}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </PanelShell>
-  );
 }
 
 function InspectView() {
@@ -962,36 +1051,3 @@ function formatValue(v) {
   return v;
 }
 
-function TodosStrip({ rows }) {
-  const pending = rows.filter(t => !t.is_completed);
-  return (
-    <section className="space-y-3 pt-2">
-      <div className="flex items-baseline justify-between">
-        <h3 className="font-medium text-slate-900 text-sm flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-sky-500"></span>
-          Action Items
-        </h3>
-        <span className="text-xs text-slate-400">{pending.length} pending</span>
-      </div>
-      <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
-        {rows.length === 0 && <EmptyMsg>No todos extracted yet.</EmptyMsg>}
-        {rows.map((t) => (
-          <div key={t.id} className="flex items-start gap-3 py-1.5 px-1 hover:bg-slate-50 rounded-md transition-colors">
-            <input
-              type="checkbox"
-              checked={Boolean(t.is_completed)}
-              readOnly
-              className="mt-1 h-4 w-4 rounded text-indigo-600 border-slate-300"
-            />
-            <div className="flex-1">
-              <p className={`text-sm text-slate-700 ${t.is_completed ? 'line-through text-slate-400' : ''}`}>
-                {t.task_description}
-              </p>
-              {t.due_date && <span className="text-[10px] text-rose-500">Due: {t.due_date}</span>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}

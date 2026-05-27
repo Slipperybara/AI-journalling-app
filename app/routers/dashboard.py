@@ -75,12 +75,16 @@ async def get_dashboard():
         events = [dict(r) for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, day, task_description, is_completed, due_date
+            SELECT id, day, task_description, is_completed, due_date,
+                   created_at, fulfilled_at, source_day
             FROM todos
-            ORDER BY id DESC
-            LIMIT 25
-        """)
-        todos = [dict(r) for r in cursor.fetchall()]
+            WHERE day >= ?
+            ORDER BY day DESC, id ASC
+        """, (seven_back,))
+        todos: dict[str, list] = {}
+        for r in cursor.fetchall():
+            d = dict(r)
+            todos.setdefault(d["day"], []).append(d)
 
         cursor.execute("""
             SELECT day, status, parsed_at FROM parse_log
