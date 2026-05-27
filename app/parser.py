@@ -12,7 +12,13 @@ PARSER_SYSTEM_BATCH = (
     "day. ONLY populate fields with content the user actually mentioned. Use null / empty list for "
     "anything not present. Do NOT invent or infer beyond what was said. Always provide "
     "valence/arousal/primary_quadrant — pick values that best summarize the day's overall affect; "
-    "use 0.0 / 'Recovery & Clarity' if affect is fully absent."
+    "use 0.0 / 'Recovery & Clarity' if affect is fully absent. "
+    "For todos specifically: emit ONLY daily executables each taking under 3 hours. "
+    "If the user mentions a project or goal that would exceed 3 hours (e.g. 'build X', "
+    "'finish Y project', 'prepare for Z'), decompose it into concrete sub-tasks each under "
+    "3 hours and emit each as a separate TodoItem. If you cannot infer sub-tasks, emit a "
+    "single first-next-action todo (e.g. 'Research options for X — 1h'). "
+    "Never emit a multi-day project as a single todo."
 )
 
 

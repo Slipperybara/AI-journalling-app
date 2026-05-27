@@ -8,7 +8,16 @@ from pydantic import BaseModel, Field
 
 
 class TodoItem(BaseModel):
-    task: str = Field(description="A concrete actionable task the user mentioned. Skip vague intentions.")
+    task: str = Field(
+        description=(
+            "A concrete, atomic, daily executable taking under 3 hours. "
+            "If the user mentions a larger project or goal, break it into separate "
+            "sub-tasks each under 3 hours — emit one TodoItem per sub-task. "
+            "Never emit a single todo for anything that would take more than 3 hours. "
+            "If sub-tasks cannot be inferred, emit a single first-next-action "
+            "(e.g. 'Research options for X — 1h'). Skip vague intentions with no clear next action."
+        )
+    )
     due_date: Optional[str] = Field(description="YYYY-MM-DD if explicitly mentioned, else null.")
 
 

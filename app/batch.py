@@ -8,41 +8,23 @@ import traceback
 from datetime import datetime, timedelta
 from typing import List
 
-from .db import connect
+from .day_messages import get_days_with_messages, get_messages_for_day
+from .db import EXTRACTION_TABLES, connect
 from .extractions import store_extractions
 from .parser import parse_day_content
-from .time_buckets import current_bucket, sqlite_bucket_modifier
+from .time_buckets import current_bucket
 
 
 def _fetch_day_messages(day: str) -> List[dict]:
-    """Return all user messages belonging to conversations bucketed to `day`,
-    chronological. Conversation membership uses started_at (not message
-    timestamps), so messages from a midnight-spanning convo bucket together."""
-    with connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT m.id, m.conversation_id, m.content, m.created_at
-            FROM messages m
-            JOIN conversations c ON m.conversation_id = c.id
-            WHERE date(c.started_at, ?) = ?
-              AND m.role = 'user'
-            ORDER BY m.created_at ASC
-        """, (sqlite_bucket_modifier(), day))
-        return [dict(r) for r in cursor.fetchall()]
+    """Return all user messages whose created_at falls in the day-bucket for `day`."""
+    return get_messages_for_day(day, roles=('user',))
 
 
-def _delete_existing_rows(day: str, message_ids: List[int]) -> None:
-    """Idempotent cleanup. Removes (a) any prior day-keyed rows for this day,
-    and (b) any legacy per-message rows anchored on this day's messages (these
-    could exist on DBs that pre-date the day-keyed migration)."""
-    placeholders = ",".join("?" * len(message_ids)) or "NULL"
+def _delete_existing_rows(day: str) -> None:
     with connect() as conn:
         cursor = conn.cursor()
-        for table in ("emotional_analysis", "health_metrics", "productivity_metrics", "events", "todos"):
-            cursor.execute(
-                f"DELETE FROM {table} WHERE day = ? OR (day IS NULL AND message_id IN ({placeholders}))",
-                [day, *message_ids],
-            )
+        for table in EXTRACTION_TABLES:
+            cursor.execute(f"DELETE FROM {table} WHERE day = ?", (day,))
 
 
 def _format_batch_prompt(messages: List[dict]) -> str:
@@ -75,6 +57,7 @@ def parse_day(day: str) -> dict:
     messages = _fetch_day_messages(day)
 
     if not messages:
+        _delete_existing_rows(day)
         _mark_parse_log(day, status="empty")
         return {"day": day, "status": "empty", "messages": 0}
 
@@ -86,10 +69,8 @@ def parse_day(day: str) -> dict:
         _mark_parse_log(day, status="failed", error=str(e))
         raise
 
-    anchor_message_id = messages[-1]["id"]
-    msg_ids = [m["id"] for m in messages]
-    _delete_existing_rows(day, msg_ids)
-    store_extractions(anchor_message_id, parsed, day=day)
+    _delete_existing_rows(day)
+    store_extractions(parsed, day=day)
     _mark_parse_log(day, status="succeeded")
     return {"day": day, "status": "succeeded", "messages": len(messages)}
 
@@ -112,6 +93,22 @@ def catch_up_parses(days_back: int = 7) -> None:
         except Exception:
             print(f"[batch] catch-up failed for {d}")
             traceback.print_exc()
+
+
+def backfill_all_message_days() -> int:
+    """Parse every day-bucket that has at least one user message. Used after
+    the one-shot schema migration so the dashboard / inspector has data to
+    work with on first launch. Idempotent (delegates to `parse_day`)."""
+    days = [r["day"] for r in get_days_with_messages()]
+
+    for d in days:
+        try:
+            parse_day(d)
+            print(f"[batch] backfill parsed {d}")
+        except Exception:
+            print(f"[batch] backfill failed for {d}")
+            traceback.print_exc()
+    return len(days)
 
 
 def run_scheduled_batch() -> None:

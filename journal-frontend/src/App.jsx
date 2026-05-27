@@ -238,6 +238,16 @@ export default function App() {
             >
               Dashboard
             </button>
+            <button
+              onClick={() => setView('inspect')}
+              className={`text-xs font-medium pb-1.5 transition-colors ${
+                view === 'inspect'
+                  ? 'text-slate-900 border-b border-slate-900'
+                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
+              }`}
+            >
+              Inspect
+            </button>
           </div>
         </div>
 
@@ -283,6 +293,7 @@ export default function App() {
           />
         )}
         {view === 'dashboard' && <DashboardView data={dashboard} />}
+        {view === 'inspect' && <InspectView />}
       </main>
     </div>
   );
@@ -590,6 +601,365 @@ function EventsPanel({ rows }) {
       ))}
     </PanelShell>
   );
+}
+
+function InspectView() {
+  const [days, setDays] = useState([]);
+  const [selectedDay, setSelectedDay] = useState('');
+  const [data, setData] = useState(null);
+  const [reparsing, setReparsing] = useState(false);
+  const [evalResult, setEvalResult] = useState(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+
+  const loading = !!selectedDay && (!data || data.day !== selectedDay);
+
+  const loadDay = useCallback(async (day) => {
+    if (!day) return;
+    let result = null;
+    try {
+      const res = await fetch(`${API}/api/admin/inspect/${day}`);
+      if (res.ok) result = await res.json();
+    } catch {
+      // swallow — `result` stays null and UI shows empty state
+    }
+    setData(result);
+    setEvalResult(null);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch(`${API}/api/admin/inspect/days`);
+      if (!res.ok) return;
+      const list = await res.json();
+      setDays(list);
+      if (list.length > 0) {
+        setSelectedDay((prev) => prev || list[0].day);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedDay) return;
+    (async () => { await loadDay(selectedDay); })();
+  }, [selectedDay, loadDay]);
+
+  const reparseDay = async () => {
+    if (!selectedDay || reparsing) return;
+    setReparsing(true);
+    try {
+      await fetch(`${API}/api/admin/parse-day/${selectedDay}`, { method: 'POST' });
+      await loadDay(selectedDay);
+    } finally {
+      setReparsing(false);
+    }
+  };
+
+  const runEval = async () => {
+    if (!selectedDay || evalLoading) return;
+    setEvalLoading(true);
+    try {
+      const res = await fetch(`${API}/api/admin/eval/${selectedDay}`, { method: 'POST' });
+      setEvalResult(await res.json());
+    } catch {
+      setEvalResult({ error: 'eval call failed' });
+    } finally {
+      setEvalLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto px-8 py-7">
+      <div className="max-w-7xl mx-auto space-y-5">
+        <header className="flex items-end justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Inspect</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Raw chat next to parsed extractions, for verifying parse quality day by day.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedDay}
+              onChange={(e) => setSelectedDay(e.target.value)}
+              className="text-sm bg-white border border-slate-200 rounded-md px-2 py-1.5"
+            >
+              {days.length === 0 && <option value="">No days with messages</option>}
+              {days.map((d) => (
+                <option key={d.day} value={d.day}>
+                  {d.day} ({d.message_count} msg{d.message_count === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={reparseDay}
+              disabled={!selectedDay || reparsing}
+              className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-md transition-colors"
+            >
+              {reparsing ? 'Reparsing…' : 'Re-parse this day'}
+            </button>
+          </div>
+        </header>
+
+        {loading && <p className="text-sm text-slate-400">Loading…</p>}
+
+        {!loading && data && (
+          <>
+            <ParseLogBadge log={data.parse_log} window={data.bucket_window} />
+            <div className="grid grid-cols-2 gap-6">
+              <TranscriptColumn messages={data.messages} />
+              <ExtractionsColumn
+                extractions={data.extractions}
+                onEval={runEval}
+                evalLoading={evalLoading}
+                evalResult={evalResult}
+              />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ParseLogBadge({ log, window }) {
+  const status = log?.status ?? 'none';
+  const tone = {
+    succeeded: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    empty: 'bg-slate-50 text-slate-600 border-slate-200',
+    failed: 'bg-rose-50 text-rose-700 border-rose-200',
+    none: 'bg-amber-50 text-amber-700 border-amber-200',
+  }[status];
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <div className="flex items-center gap-3">
+        <span className={`px-2 py-0.5 rounded border font-medium ${tone}`}>
+          parse_log: {status}
+        </span>
+        {log?.parsed_at && (
+          <span className="text-slate-400">parsed at {new Date(log.parsed_at).toLocaleString()}</span>
+        )}
+        {log?.error && (
+          <span className="text-rose-600 truncate max-w-xl">error: {log.error}</span>
+        )}
+      </div>
+      {window && (
+        <span className="text-slate-400">
+          window: {new Date(window.start).toLocaleString()} → {new Date(window.end).toLocaleString()}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function TranscriptColumn({ messages }) {
+  return (
+    <section className="space-y-2">
+      <h3 className="font-medium text-slate-900 text-sm">Raw transcript ({messages.length})</h3>
+      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto pr-2">
+        {messages.length === 0 && <EmptyMsg>No messages in this day-bucket.</EmptyMsg>}
+        {messages.map((m, i) => {
+          const prev = messages[i - 1];
+          const convBreak = prev && prev.conversation_id !== m.conversation_id;
+          return (
+            <div key={m.id}>
+              {convBreak && (
+                <div className="flex items-center gap-2 py-2">
+                  <div className="flex-1 h-px bg-slate-200" />
+                  <span className="text-[10px] text-slate-400">new conversation</span>
+                  <div className="flex-1 h-px bg-slate-200" />
+                </div>
+              )}
+              <TranscriptMessage m={m} />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TranscriptMessage({ m }) {
+  const isUser = m.role === 'user';
+  const roleClass = isUser
+    ? 'bg-slate-100 text-slate-700 border-slate-200'
+    : 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  return (
+    <div className="border border-slate-200 bg-white rounded-md p-3 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${roleClass}`}>
+          {m.role}
+        </span>
+        <span className="text-[10px] text-slate-400 font-mono">
+          {new Date(m.created_at).toLocaleString()} · #{m.id}
+        </span>
+      </div>
+      <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{m.content}</p>
+    </div>
+  );
+}
+
+function ExtractionsColumn({ extractions, onEval, evalLoading, evalResult }) {
+  const { emotional, health, productivity, events, todos } = extractions;
+  return (
+    <section className="space-y-3">
+      <h3 className="font-medium text-slate-900 text-sm">Extractions</h3>
+      <div className="space-y-3 max-h-[calc(100vh-220px)] overflow-y-auto pr-2">
+        <ExtractionCard title="Emotional">
+          {emotional ? <EmotionalDetail r={emotional} /> : <NotExtracted />}
+        </ExtractionCard>
+        <ExtractionCard title="Health">
+          {health ? <HealthDetail r={health} /> : <NotExtracted />}
+        </ExtractionCard>
+        <ExtractionCard title="Productivity">
+          {productivity ? <ProductivityDetail r={productivity} /> : <NotExtracted />}
+        </ExtractionCard>
+        <ExtractionCard title={`Events (${events.length})`}>
+          {events.length === 0 ? <NotExtracted /> : (
+            <div className="space-y-2">
+              {events.map((e) => (
+                <div key={e.id} className="border-t border-slate-100 first:border-0 pt-2 first:pt-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-800">{e.title}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${eventTypeColor(e.event_type)}`}>
+                      {e.event_type}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-1">{e.description}</p>
+                  {e.tags && <p className="text-[10px] text-slate-400 font-mono mt-1">tags: {e.tags}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </ExtractionCard>
+        <ExtractionCard title={`Todos (${todos.length})`}>
+          {todos.length === 0 ? <NotExtracted /> : (
+            <ul className="space-y-1">
+              {todos.map((t) => (
+                <li key={t.id} className="text-sm text-slate-700 flex gap-2">
+                  <span className="text-slate-400">•</span>
+                  <span className="flex-1">{t.task_description}</span>
+                  {t.due_date && <span className="text-[10px] text-rose-500">due {t.due_date}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </ExtractionCard>
+
+        <ExtractionCard title="Automated evaluation (preview)">
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500">
+              Run a higher-tier model over the transcript + extractions and grade each field. Scaffold only — wires up next round.
+            </p>
+            <button
+              onClick={onEval}
+              disabled={evalLoading}
+              className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white rounded-md transition-colors"
+            >
+              {evalLoading ? 'Calling…' : 'Run automated evaluation'}
+            </button>
+            {evalResult && (
+              <pre className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto">
+                {JSON.stringify(evalResult, null, 2)}
+              </pre>
+            )}
+          </div>
+        </ExtractionCard>
+      </div>
+    </section>
+  );
+}
+
+function ExtractionCard({ title, children }) {
+  return (
+    <div className="border border-slate-200 bg-white rounded-md p-3 space-y-2">
+      <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+function NotExtracted() {
+  return <p className="text-xs text-slate-400 italic">Not extracted for this day.</p>;
+}
+
+function EmotionalDetail({ r }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${getQuadrantBadgeColor(r.primary_quadrant)}`}>
+          {r.primary_quadrant || '—'}
+        </span>
+        <span className="text-[11px] text-slate-500">
+          valence {r.valence?.toFixed(2)} · arousal {r.arousal?.toFixed(2)}
+        </span>
+      </div>
+      <FieldList
+        items={[
+          ['cognitive_labels', r.cognitive_labels],
+          ['cognitive_triggers', r.cognitive_triggers],
+          ['social_interactions', r.social_interactions],
+        ]}
+      />
+    </div>
+  );
+}
+
+function HealthDetail({ r }) {
+  return (
+    <FieldList
+      items={[
+        ['sleep_quality', r.sleep_quality],
+        ['exercise_type', r.exercise_type],
+        ['diet_quality', r.diet_quality],
+        ['physical_performance', r.physical_performance],
+        ['somatic_sensations', r.somatic_sensations],
+        ['supplements', r.supplements],
+      ]}
+    />
+  );
+}
+
+function ProductivityDetail({ r }) {
+  return (
+    <FieldList
+      items={[
+        ['deep_work_hours', r.deep_work_hours],
+        ['shallow_work_hours', r.shallow_work_hours],
+        ['time_block_adherence', r.time_block_adherence],
+        ['cognitive_load', r.cognitive_load],
+        ['friction_points', r.friction_points],
+      ]}
+    />
+  );
+}
+
+function FieldList({ items }) {
+  return (
+    <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
+      {items.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="text-slate-400 font-mono">{k}</dt>
+          <dd className="text-slate-700">{formatValue(v)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function formatValue(v) {
+  if (v == null || v === '') return <span className="text-slate-300 italic">null</span>;
+  if (Array.isArray(v)) {
+    if (v.length === 0) return <span className="text-slate-300 italic">[]</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {v.map((item, i) => (
+          <span key={i} className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px]">{item}</span>
+        ))}
+      </div>
+    );
+  }
+  if (typeof v === 'number') return v.toString();
+  return v;
 }
 
 function TodosStrip({ rows }) {

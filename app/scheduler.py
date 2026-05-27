@@ -1,19 +1,29 @@
 """APScheduler lifecycle for the daily batch parse.
 
 Runs the batch once per day at `settings.day_boundary_hour` (default 06:00
-local). The catch-up sweep is kicked off in a background thread at startup so
-it doesn't block app startup if many days need reparsing.
+local). On startup, kicks off a background thread that first runs the
+one-shot backfill (if `init_db` migrated the extraction tables) and then the
+normal 7-day catch-up sweep. Both run off the request thread so app startup
+isn't blocked.
 """
 import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from .batch import catch_up_parses, run_scheduled_batch
+from . import db
+from .batch import backfill_all_message_days, catch_up_parses, run_scheduled_batch
 from .core import settings
 
 
 _scheduler = BackgroundScheduler()
+
+
+def _startup_parses() -> None:
+    if db.migration_ran:
+        count = backfill_all_message_days()
+        print(f"[scheduler] backfill complete: {count} day(s)")
+    catch_up_parses()
 
 
 def start() -> None:
@@ -26,7 +36,7 @@ def start() -> None:
         replace_existing=True,
     )
     _scheduler.start()
-    threading.Thread(target=catch_up_parses, daemon=True).start()
+    threading.Thread(target=_startup_parses, daemon=True).start()
 
 
 def stop() -> None:

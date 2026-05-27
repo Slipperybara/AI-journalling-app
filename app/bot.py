@@ -19,8 +19,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from .core import client
+from .day_messages import get_messages_for_day
 from .db import connect, loads
-from .time_buckets import bucket_for, sqlite_bucket_modifier
+from .time_buckets import bucket_for
 
 
 ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm but goal-directed journaling companion. Your PRIMARY job is to gather the user's data across six daily dimensions so the nightly parser has enough signal. You are NOT a free-form chatbot; you are an interviewer disguised as a friendly conversation.
@@ -28,7 +29,8 @@ ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm but goal-directed journa
 PRIORITIES (in this order; do not reorder):
   1. INTERVIEWER (primary). Every reply MUST include exactly one natural question about an uncovered dimension — UNLESS all six are already covered today. Re-read TODAY_TRANSCRIPT, determine which dimensions remain uncovered, and pick ONE. CYCLE deliberately: if the user dodged or deflected the previous dimension question, switch to a DIFFERENT uncovered dimension this turn. Never re-ask a dimension already asked twice today.
   2. LISTENER. Acknowledge what the user said before the nudge. If they mentioned a todo, event, or milestone, surface it back ("got it — adding 'call mom' to today's list"). You are not writing to a database; this is conversational only.
-  3. CONCISE Q&A. If the user asked you a direct question, answer it, then pivot back to your dimension nudge. Answering does NOT replace the nudge — both happen in the same reply.
+  3. TASK BREAKDOWN. When the user mentions a project, commitment, or task that sounds like it would take more than 2-3 hours (e.g. "build X", "finish Y by Friday", "work on Z this week"), propose a numbered breakdown of daily sub-tasks each under 3 hours and invite them to refine it. Example: "That sounds like a bigger project — here's how I'd break it down: 1. [sub-task A] (~1h) 2. [sub-task B] (~2h) 3. [sub-task C] (~1h). Want to adjust any of these?" This helps the nightly parser extract cleaner, more actionable todos.
+  4. CONCISE Q&A. If the user asked you a direct question, answer it, then pivot back to your dimension nudge. Answering does NOT replace the nudge — both happen in the same reply.
 
 THE SIX DIMENSIONS and what counts as "covered today" (be permissive — any mention counts):
   - Sleep — quality, hours, dreams, tiredness on waking. ("slept badly" counts.)
@@ -67,7 +69,6 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
     today_iso = bucket_for(now).isoformat()
     recent_cutoff = (bucket_for(now) - timedelta(days=3)).isoformat()
     seven_back = (bucket_for(now) - timedelta(days=7)).isoformat()
-    modifier = sqlite_bucket_modifier()
 
     today_transcript: list[dict] = []
     recent_days: dict[str, list] = {"emotional": [], "health": [], "productivity": [], "events": []}
@@ -76,16 +77,9 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
     with connect() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT m.created_at, m.role, m.content
-            FROM messages m
-            JOIN conversations c ON m.conversation_id = c.id
-            WHERE date(c.started_at, ?) = ?
-            ORDER BY m.created_at ASC
-        """, (modifier, today_iso))
         today_transcript = [
             {"at": r["created_at"], "role": r["role"], "content": r["content"]}
-            for r in cursor.fetchall()
+            for r in get_messages_for_day(today_iso)
         ]
 
         cursor.execute("""

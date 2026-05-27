@@ -1,7 +1,9 @@
 """SQLite schema bootstrap + small DB-shaped helpers.
 
 All DB access in this app uses raw `sqlite3` with `conn.row_factory = sqlite3.Row`.
-No ORM. `init_db()` is idempotent and self-migrates via `ALTER TABLE … ADD COLUMN`.
+No ORM. `init_db()` is idempotent. If it detects drift from a previous schema
+(vestigial `message_id` column on extraction tables), it drops and recreates
+the extraction tables and clears `parse_log` so the batch can backfill.
 """
 import json
 import sqlite3
@@ -9,6 +11,11 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from .core import DB_NAME
+
+
+# Set to True by `init_db()` when the one-shot extraction-table cleanup runs,
+# so the scheduler can trigger a backfill across every day with messages.
+migration_ran = False
 
 
 @contextmanager
@@ -33,30 +40,30 @@ def loads(s: Any) -> list:
         return []
 
 
-def _column_exists(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
-    cursor.execute(f"PRAGMA table_info({table})")
-    return any(r[1] == column for r in cursor.fetchall())
+EXTRACTION_TABLES = (
+    "emotional_analysis",
+    "health_metrics",
+    "productivity_metrics",
+    "events",
+    "todos",
+)
 
 
-def _add_day_column(cursor: sqlite3.Cursor, table: str) -> None:
-    if not _column_exists(cursor, table, "day"):
-        cursor.execute(f"ALTER TABLE {table} ADD COLUMN day TEXT")
+def _has_legacy_extraction_schema(cursor: sqlite3.Cursor) -> bool:
+    """Detect the pre-day-keyed schema: extraction tables carry a vestigial
+    `message_id` column from when each message was parsed inline."""
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='emotional_analysis'")
+    if not cursor.fetchone():
+        return False
+    cursor.execute("PRAGMA table_info(emotional_analysis)")
+    return any(r[1] == "message_id" for r in cursor.fetchall())
 
 
 def init_db() -> None:
+    global migration_ran
+
     with connect() as conn:
         cursor = conn.cursor()
-
-        # One-shot migration from the original brain-dump schema. If the legacy
-        # `journal_entries` table exists but the conversation-based schema does
-        # not, drop the old set so we start clean.
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='journal_entries'")
-        has_old = cursor.fetchone() is not None
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'")
-        has_new = cursor.fetchone() is not None
-        if has_old and not has_new:
-            for t in ("journal_entries", "daily_habits", "todos", "ideas"):
-                cursor.execute(f"DROP TABLE IF EXISTS {t}")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -77,81 +84,76 @@ def init_db() -> None:
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS parse_log (
+                day TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                parsed_at TEXT,
+                error TEXT
+            )
+        """)
+
+        if _has_legacy_extraction_schema(cursor):
+            for t in EXTRACTION_TABLES:
+                cursor.execute(f"DROP TABLE IF EXISTS {t}")
+            cursor.execute("DELETE FROM parse_log")
+            migration_ran = True
+            print("[db] migrated extraction tables to day-keyed schema; backfill will run")
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
+                day TEXT NOT NULL,
                 valence REAL,
                 arousal REAL,
                 primary_quadrant TEXT,
                 cognitive_labels TEXT,
                 cognitive_triggers TEXT,
-                social_interactions TEXT,
-                FOREIGN KEY(message_id) REFERENCES messages(id)
+                social_interactions TEXT
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS health_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
+                day TEXT NOT NULL,
                 sleep_quality TEXT,
                 exercise_type TEXT,
                 diet_quality TEXT,
                 somatic_sensations TEXT,
                 physical_performance TEXT,
-                supplements TEXT,
-                FOREIGN KEY(message_id) REFERENCES messages(id)
+                supplements TEXT
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS productivity_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
+                day TEXT NOT NULL,
                 deep_work_hours REAL,
                 shallow_work_hours REAL,
                 time_block_adherence TEXT,
                 cognitive_load TEXT,
-                friction_points TEXT,
-                FOREIGN KEY(message_id) REFERENCES messages(id)
+                friction_points TEXT
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
+                day TEXT NOT NULL,
                 title TEXT,
                 description TEXT,
                 tags TEXT,
-                event_type TEXT,
-                FOREIGN KEY(message_id) REFERENCES messages(id)
+                event_type TEXT
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS todos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                message_id INTEGER,
+                day TEXT NOT NULL,
                 task_description TEXT NOT NULL,
                 is_completed INTEGER DEFAULT 0,
-                due_date TEXT,
-                FOREIGN KEY(message_id) REFERENCES messages(id)
-            )
-        """)
-
-        # Day-keyed migration. Existing rows leave `day` NULL (they were per-
-        # message under the legacy inline-parse flow). New rows from the
-        # nightly batch set `day` to the bucket they represent.
-        for t in ("emotional_analysis", "health_metrics", "productivity_metrics", "events", "todos"):
-            _add_day_column(cursor, t)
-
-        # Tracks which day-buckets the nightly batch has processed.
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS parse_log (
-                day TEXT PRIMARY KEY,
-                status TEXT NOT NULL,
-                parsed_at TEXT,
-                error TEXT
+                due_date TEXT
             )
         """)
