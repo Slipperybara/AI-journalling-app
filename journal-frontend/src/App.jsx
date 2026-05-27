@@ -211,7 +211,7 @@ export default function App() {
   const grouped = groupByDate(conversations);
 
   return (
-    <div className="h-screen flex text-slate-800 font-sans bg-[radial-gradient(circle_at_top_right,_#bae6fd_0%,_#ffffff_55%)]">
+    <div className="h-screen flex text-slate-800 font-sans bg-[radial-gradient(circle_at_top_right,_#fed7aa_0%,_#ffffff_60%)]">
       {/* Sidebar */}
       <aside className="w-72 bg-slate-50 flex flex-col">
         <div className="p-5">
@@ -222,7 +222,7 @@ export default function App() {
         <div className="px-3 space-y-3">
           <button
             onClick={createConversation}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors"
           >
             <span className="text-base leading-none">+</span> New Chat
           </button>
@@ -231,7 +231,7 @@ export default function App() {
               onClick={() => setView('chat')}
               className={`text-xs font-medium pb-1.5 transition-colors ${
                 view === 'chat'
-                  ? 'text-slate-900 border-b border-slate-900'
+                  ? 'text-orange-600 border-b border-orange-500'
                   : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
               }`}
             >
@@ -241,7 +241,7 @@ export default function App() {
               onClick={() => setView('dashboard')}
               className={`text-xs font-medium pb-1.5 transition-colors ${
                 view === 'dashboard'
-                  ? 'text-slate-900 border-b border-slate-900'
+                  ? 'text-orange-600 border-b border-orange-500'
                   : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
               }`}
             >
@@ -251,7 +251,7 @@ export default function App() {
               onClick={() => setView('inspect')}
               className={`text-xs font-medium pb-1.5 transition-colors ${
                 view === 'inspect'
-                  ? 'text-slate-900 border-b border-slate-900'
+                  ? 'text-orange-600 border-b border-orange-500'
                   : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
               }`}
             >
@@ -358,7 +358,7 @@ function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKey
             <button
               onClick={sendMessage}
               disabled={!input.trim() || isWaiting}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm font-medium rounded-xl transition-colors"
+              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white text-sm font-medium rounded-xl transition-colors"
             >
               Send
             </button>
@@ -379,8 +379,8 @@ function MessageBubble({ message }) {
       <div
         className={`max-w-[75%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap text-sm leading-relaxed ${
           isUser
-            ? 'bg-slate-800 text-white'
-            : 'bg-slate-50 text-slate-800'
+            ? 'bg-orange-500 text-white'
+            : 'bg-white text-slate-800 border border-slate-100'
         }`}
       >
         {message.content}
@@ -523,11 +523,11 @@ function TodoPanel({ initialTodos }) {
               onClick={() => toggle(todo)}
               className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
                 todo.is_completed
-                  ? 'bg-indigo-600 border-indigo-600 text-white'
-                  : 'border-slate-300 hover:border-indigo-400'
+                  ? 'bg-orange-500 border-orange-500 text-white'
+                  : 'border-slate-300 hover:border-orange-400'
               }`}
             >
-              {todo.is_completed && <span className="text-[10px] leading-none">✓</span>}
+              {!!todo.is_completed && <span className="text-[10px] leading-none">✓</span>}
             </button>
             <div className="flex-1 min-w-0">
               <p className={`text-sm ${todo.is_completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
@@ -570,7 +570,7 @@ function TodoPanel({ initialTodos }) {
         <button
           type="submit"
           disabled={!addInput.trim()}
-          className="text-xs px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-md transition-colors"
+          className="text-xs px-2.5 py-1 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white rounded-md transition-colors"
         >
           Add
         </button>
@@ -582,7 +582,7 @@ function TodoPanel({ initialTodos }) {
 const SLEEP_MAP = { 'Poor': 0, 'Fair': 0.33, 'Good': 0.67, 'Excellent': 1 };
 const DIET_MAP = { 'Junk/Heavy': 0, 'Carbs Centered': 0.25, 'Meat and Vegetable centered': 0.6, 'Clean': 1 };
 
-function SparkPolyline({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+function SparkPolyline({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
   const pts = days.map((d, i) => {
     const v = byDay[d];
     if (v == null) return null;
@@ -604,7 +604,7 @@ function SparkPolyline({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
   );
 }
 
-function SparkBars({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+function SparkBars({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
   const vals = days.map(d => byDay[d] ?? null);
   const maxVal = Math.max(...vals.filter(v => v != null), 1);
   const bw = Math.max(1, W / days.length - 2);
@@ -621,7 +621,7 @@ function SparkBars({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
   );
 }
 
-function SparkDots({ days, byDay, W = 100, H = 32, color = '#6366f1' }) {
+function SparkDots({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
   return (
     <svg width={W} height={H}>
       {days.map((d, i) => {
@@ -661,7 +661,7 @@ function WeeklySummary({ emotional, health, productivity, events }) {
   const totalEvents = events.length;
 
   const cards = [
-    { title: 'Emotional', color: '#6366f1', stat: `avg ${avgValence > 0 ? '+' : ''}${avgValence}`, sparkline: <SparkPolyline days={last7} byDay={emotByDay} color="#6366f1" /> },
+    { title: 'Emotional', color: '#f97316', stat: `avg ${avgValence > 0 ? '+' : ''}${avgValence}`, sparkline: <SparkPolyline days={last7} byDay={emotByDay} color="#f97316" /> },
     { title: 'Sleep', color: '#f43f5e', stat: `${sleepDays}/7 days`, sparkline: <SparkDots days={last7} byDay={sleepByDay} color="#f43f5e" /> },
     { title: 'Exercise', color: '#10b981', stat: `${exerciseDays}/7 days`, sparkline: <SparkBars days={last7} byDay={exerciseByDay} color="#10b981" /> },
     { title: 'Diet', color: '#f59e0b', stat: `${dietDays}/7 days`, sparkline: <SparkDots days={last7} byDay={dietByDay} color="#f59e0b" /> },
@@ -782,7 +782,7 @@ function InspectView() {
             <button
               onClick={reparseDay}
               disabled={!selectedDay || reparsing}
-              className="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white rounded-md transition-colors"
+              className="text-xs px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white rounded-md transition-colors"
             >
               {reparsing ? 'Reparsing…' : 'Re-parse this day'}
             </button>
@@ -871,7 +871,7 @@ function TranscriptMessage({ m }) {
   const isUser = m.role === 'user';
   const roleClass = isUser
     ? 'bg-slate-100 text-slate-700 border-slate-200'
-    : 'bg-indigo-50 text-indigo-700 border-indigo-200';
+    : 'bg-orange-50 text-orange-700 border-orange-200';
   return (
     <div className="border border-slate-200 bg-white rounded-md p-3 space-y-1.5">
       <div className="flex items-center justify-between">
