@@ -34,6 +34,18 @@ const dayLabel = (iso) => {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 };
 
+// Mirror of the backend's `bucket_for` (`app/time_buckets.py`): subtract 6h from a
+// local timestamp, take its calendar date. Returned as YYYY-MM-DD for stable comparison.
+const BUCKET_OFFSET_MS = 6 * 60 * 60 * 1000;
+const bucketKey = (t) => {
+  const d = t instanceof Date ? t : new Date(t);
+  const shifted = new Date(d.getTime() - BUCKET_OFFSET_MS);
+  const y = shifted.getFullYear();
+  const m = String(shifted.getMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 const conversationPreview = (c) => {
   if (c.first_user_message) {
     const s = c.first_user_message.trim().replace(/\s+/g, ' ');
@@ -88,14 +100,18 @@ export default function App() {
     return conv.id;
   }, [fetchConversations]);
 
-  // Boot: load conversations, select most recent (or create new)
+  // Boot: open a chat in today's 6-AM bucket. Auto-create a fresh one if the newest
+  // conversation is from a previous bucket (or none exists yet). The new chat still
+  // inherits the day's accumulated context via the backend's day-wide TODAY_TRANSCRIPT.
   useEffect(() => {
     (async () => {
       const list = await fetchConversations();
-      if (list.length > 0) {
-        setActiveConvId(list[0].id);
-      } else {
+      const newest = list[0];
+      const todayBucket = bucketKey(new Date());
+      if (!newest || bucketKey(newest.started_at) !== todayBucket) {
         await createConversation();
+      } else {
+        setActiveConvId(newest.id);
       }
     })();
   }, [fetchConversations, createConversation]);
@@ -186,52 +202,60 @@ export default function App() {
   const grouped = groupByDate(conversations);
 
   return (
-    <div className="h-screen flex bg-slate-50 text-slate-800 font-sans">
+    <div className="h-screen flex text-slate-800 font-sans bg-[radial-gradient(circle_at_top_right,_#bae6fd_0%,_#ffffff_55%)]">
       {/* Sidebar */}
-      <aside className="w-72 border-r border-slate-200 bg-white flex flex-col">
-        <div className="p-4 border-b border-slate-200">
-          <h1 className="text-lg font-bold tracking-tight text-slate-900">MindForge AI</h1>
+      <aside className="w-72 bg-slate-50 flex flex-col">
+        <div className="p-5">
+          <h1 className="text-base font-semibold text-slate-900">MindForge</h1>
           <p className="text-xs text-slate-500 mt-0.5">Talk it through. We'll track the rest.</p>
         </div>
 
-        <div className="p-3 border-b border-slate-200 space-y-2">
+        <div className="px-3 space-y-3">
           <button
             onClick={createConversation}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
           >
             <span className="text-base leading-none">+</span> New Chat
           </button>
-          <div className="flex bg-slate-100 p-1 rounded-lg">
+          <div className="flex gap-4 px-1 pt-1">
             <button
               onClick={() => setView('chat')}
-              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${view === 'chat' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600'}`}
+              className={`text-xs font-medium pb-1.5 transition-colors ${
+                view === 'chat'
+                  ? 'text-slate-900 border-b border-slate-900'
+                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
+              }`}
             >
               Chat
             </button>
             <button
               onClick={() => setView('dashboard')}
-              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${view === 'dashboard' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600'}`}
+              className={`text-xs font-medium pb-1.5 transition-colors ${
+                view === 'dashboard'
+                  ? 'text-slate-900 border-b border-slate-900'
+                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
+              }`}
             >
               Dashboard
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        <div className="flex-1 overflow-y-auto px-3 pt-4 pb-3 space-y-4">
           {Object.keys(grouped).length === 0 && (
-            <p className="text-xs text-slate-400 italic px-2">No conversations yet.</p>
+            <p className="text-xs text-slate-400 px-2">No conversations yet.</p>
           )}
           {Object.entries(grouped).map(([label, convs]) => (
             <div key={label} className="space-y-1">
-              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold px-2">{label}</div>
+              <div className="text-[10px] text-slate-400 font-medium px-2">{label}</div>
               {convs.map(c => (
                 <button
                   key={c.id}
                   onClick={() => { setActiveConvId(c.id); setView('chat'); }}
-                  className={`w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors ${
+                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-sm transition-colors ${
                     activeConvId === c.id && view === 'chat'
-                      ? 'bg-indigo-50 text-indigo-900 border border-indigo-100'
-                      : 'text-slate-700 hover:bg-slate-100 border border-transparent'
+                      ? 'bg-white text-slate-900'
+                      : 'text-slate-600 hover:bg-white/60'
                   }`}
                 >
                   <div className="truncate">{conversationPreview(c)}</div>
@@ -265,13 +289,23 @@ export default function App() {
 }
 
 function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKeyDown, messagesEndRef }) {
+  const textareaRef = useRef(null);
+
+  // Auto-grow vertically with content; clamp via CSS max-height.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, [input]);
+
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-6 py-8">
-        <div className="max-w-3xl mx-auto space-y-4">
+      <div className="flex-1 overflow-y-auto px-6 py-7">
+        <div className="max-w-3xl mx-auto space-y-3">
           {messages.length === 0 && (
-            <div className="text-center text-slate-400 text-sm italic mt-20">
-              Start by saying anything — how you're feeling, what you got done, an idea you're sitting on.
+            <div className="text-center text-slate-400 text-sm mt-24">
+              Say anything — how you slept, what you ate, an idea you're sitting on.
             </div>
           )}
           {messages.map(m => (
@@ -279,7 +313,7 @@ function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKey
           ))}
           {isWaiting && (
             <div className="flex justify-start">
-              <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+              <div className="bg-slate-50 rounded-2xl px-4 py-3">
                 <TypingDots />
               </div>
             </div>
@@ -288,16 +322,17 @@ function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKey
         </div>
       </div>
 
-      <div className="border-t border-slate-200 bg-white px-6 py-4">
+      <div className="bg-white px-6 py-4">
         <div className="max-w-3xl mx-auto">
-          <div className="flex items-end gap-3 bg-slate-50 rounded-2xl border border-slate-200 p-2 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-all">
+          <div className="flex items-end gap-2 bg-slate-50 rounded-2xl p-2 focus-within:bg-slate-100 transition-colors">
             <textarea
+              ref={textareaRef}
               rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="What's on your mind?"
-              className="flex-1 bg-transparent resize-none outline-none px-3 py-2 text-sm text-slate-700 placeholder-slate-400 max-h-40"
+              className="flex-1 bg-transparent resize-none outline-none px-3 py-2 text-sm text-slate-700 placeholder-slate-400 max-h-48 overflow-y-auto"
               disabled={isWaiting}
             />
             <button
@@ -322,10 +357,10 @@ function MessageBubble({ message }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[75%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap text-sm leading-relaxed shadow-sm ${
+        className={`max-w-[75%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap text-sm leading-relaxed ${
           isUser
-            ? 'bg-indigo-600 text-white rounded-br-sm'
-            : 'bg-white border border-slate-200 text-slate-800 rounded-bl-sm'
+            ? 'bg-slate-800 text-white'
+            : 'bg-slate-50 text-slate-800'
         }`}
       >
         {message.content}
@@ -347,16 +382,16 @@ function TypingDots() {
 function DashboardView({ data }) {
   const { emotional, health, productivity, events, todos } = data;
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <header className="pb-4 border-b border-slate-200">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard</h2>
+    <div className="flex-1 overflow-y-auto px-8 py-7">
+      <div className="max-w-6xl mx-auto space-y-7">
+        <header>
+          <h2 className="text-xl font-semibold text-slate-900">Dashboard</h2>
           <p className="text-sm text-slate-500 mt-1">
             Last 7 days across the four tracked domains. Today's chat populates after the overnight parse.
           </p>
         </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-8">
           <EmotionalPanel rows={emotional} />
           <HealthPanel rows={health} />
           <ProductivityPanel rows={productivity} />
@@ -371,19 +406,17 @@ function DashboardView({ data }) {
 
 function PanelShell({ title, accent, count, children }) {
   return (
-    <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
-      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-        <h3 className="font-semibold text-slate-900 text-base flex items-center gap-2">
-          <span className={`w-2.5 h-2.5 rounded-full ${accent}`}></span>
+    <section className="space-y-3">
+      <div className="flex items-baseline justify-between">
+        <h3 className="font-medium text-slate-900 text-sm flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${accent}`}></span>
           {title}
         </h3>
         {count != null && (
-          <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
-            {count}
-          </span>
+          <span className="text-xs text-slate-400">{count}</span>
         )}
       </div>
-      <div className="space-y-3 max-h-[360px] overflow-y-auto">
+      <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
         {children}
       </div>
     </section>
@@ -391,7 +424,7 @@ function PanelShell({ title, accent, count, children }) {
 }
 
 function EmptyMsg({ children }) {
-  return <p className="text-xs text-slate-400 italic p-2">{children}</p>;
+  return <p className="text-xs text-slate-400 py-1">{children}</p>;
 }
 
 function EmotionalPanel({ rows }) {
@@ -399,7 +432,7 @@ function EmotionalPanel({ rows }) {
     <PanelShell title="Emotional" accent="bg-indigo-500" count={rows.length}>
       {rows.length === 0 && <EmptyMsg>No emotional data yet — chat to start tracking.</EmptyMsg>}
       {rows.slice(0, 8).map((r) => (
-        <div key={r.day} className="p-3 bg-slate-50 border border-slate-100 rounded-lg space-y-2">
+        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
           <div className="flex items-center justify-between">
             <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${getQuadrantBadgeColor(r.primary_quadrant)}`}>
               {r.primary_quadrant || '—'}
@@ -453,7 +486,7 @@ function HealthPanel({ rows }) {
     <PanelShell title="Health" accent="bg-rose-500" count={rows.length}>
       {rows.length === 0 && <EmptyMsg>No health data yet.</EmptyMsg>}
       {rows.slice(0, 8).map((r) => (
-        <div key={r.day} className="p-3 bg-slate-50 border border-slate-100 rounded-lg space-y-2">
+        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
           <div className="text-[10px] text-slate-400">{dayLabel(r.day)}</div>
           <div className="flex flex-wrap gap-1.5">
             {r.sleep_quality && <KV k="Sleep" v={r.sleep_quality} />}
@@ -498,19 +531,19 @@ function ProductivityPanel({ rows }) {
     <PanelShell title="Productivity" accent="bg-emerald-500" count={rows.length}>
       {rows.length === 0 && <EmptyMsg>No productivity data yet.</EmptyMsg>}
       {rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-wider text-emerald-700">Deep (7d)</div>
+        <div className="grid grid-cols-2 gap-x-6 pb-2">
+          <div className="border-l-2 border-emerald-500 pl-3">
+            <div className="text-[10px] text-emerald-700">Deep (7d)</div>
             <div className="text-xl font-semibold text-emerald-900">{totals.deep.toFixed(1)}h</div>
           </div>
-          <div className="bg-slate-50 border border-slate-100 rounded-lg p-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-600">Shallow (7d)</div>
+          <div className="border-l-2 border-slate-300 pl-3">
+            <div className="text-[10px] text-slate-500">Shallow (7d)</div>
             <div className="text-xl font-semibold text-slate-800">{totals.shallow.toFixed(1)}h</div>
           </div>
         </div>
       )}
       {rows.slice(0, 6).map((r) => (
-        <div key={r.day} className="p-3 bg-slate-50 border border-slate-100 rounded-lg space-y-2">
+        <div key={r.day} className="pb-3 border-b border-slate-100 last:border-0 space-y-2">
           <div className="text-[10px] text-slate-400">{dayLabel(r.day)}</div>
           <div className="flex flex-wrap gap-1.5">
             {r.deep_work_hours != null && <KV k="Deep" v={`${r.deep_work_hours}h`} />}
@@ -536,7 +569,7 @@ function EventsPanel({ rows }) {
     <PanelShell title="Events" accent="bg-amber-500" count={rows.length}>
       {rows.length === 0 && <EmptyMsg>No events captured yet.</EmptyMsg>}
       {rows.map((e) => (
-        <div key={e.id} className="p-3 bg-slate-50 border border-slate-100 rounded-lg space-y-1">
+        <div key={e.id} className="pb-3 border-b border-slate-100 last:border-0 space-y-1">
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-sm font-semibold text-slate-800">{e.title}</h4>
             <span className={`text-[10px] px-2 py-0.5 rounded font-medium border ${eventTypeColor(e.event_type)}`}>
@@ -562,20 +595,18 @@ function EventsPanel({ rows }) {
 function TodosStrip({ rows }) {
   const pending = rows.filter(t => !t.is_completed);
   return (
-    <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-3">
-      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-        <h3 className="font-semibold text-slate-900 text-base flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-sky-500"></span>
+    <section className="space-y-3 pt-2">
+      <div className="flex items-baseline justify-between">
+        <h3 className="font-medium text-slate-900 text-sm flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-sky-500"></span>
           Action Items
         </h3>
-        <span className="text-xs bg-sky-50 text-sky-700 px-2 py-0.5 rounded font-medium">
-          {pending.length} pending
-        </span>
+        <span className="text-xs text-slate-400">{pending.length} pending</span>
       </div>
-      <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+      <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
         {rows.length === 0 && <EmptyMsg>No todos extracted yet.</EmptyMsg>}
         {rows.map((t) => (
-          <div key={t.id} className="flex items-start gap-3 p-2 hover:bg-slate-50 rounded-lg transition-colors">
+          <div key={t.id} className="flex items-start gap-3 py-1.5 px-1 hover:bg-slate-50 rounded-md transition-colors">
             <input
               type="checkbox"
               checked={Boolean(t.is_completed)}
@@ -586,7 +617,7 @@ function TodosStrip({ rows }) {
               <p className={`text-sm text-slate-700 ${t.is_completed ? 'line-through text-slate-400' : ''}`}>
                 {t.task_description}
               </p>
-              {t.due_date && <span className="text-[10px] text-rose-500 font-medium">Due: {t.due_date}</span>}
+              {t.due_date && <span className="text-[10px] text-rose-500">Due: {t.due_date}</span>}
             </div>
           </div>
         ))}
