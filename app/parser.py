@@ -38,10 +38,23 @@ def is_productivity_meaningful(p: ProductivityMetrics) -> bool:
 
 
 def parse_day_content(content: str) -> JournalParserResponse:
+    from .db import connect as db_connect
+    with db_connect() as conn:
+        rows = conn.execute("SELECT name FROM goals ORDER BY name").fetchall()
+    existing_goals = [r["name"] for r in rows]
+
+    goals_addendum = ""
+    if existing_goals:
+        goals_addendum = (
+            f"\n\nCurrently tracked goals: {', '.join(existing_goals)}. "
+            "When filling contributes_to_goals on each event, only use names from this list exactly as written. "
+            "Add new goal names to discovered_goals only if the user explicitly states a new objective today."
+        )
+
     completion = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": PARSER_SYSTEM_BATCH},
+            {"role": "system", "content": PARSER_SYSTEM_BATCH + goals_addendum},
             {"role": "user", "content": content},
         ],
         response_format=JournalParserResponse,
