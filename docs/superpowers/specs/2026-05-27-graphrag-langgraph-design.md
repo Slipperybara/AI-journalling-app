@@ -3,6 +3,8 @@
 **Date:** 2026-05-27  
 **Status:** Design approved, pending implementation
 
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
 ---
 
 ## Context
@@ -156,7 +158,7 @@ Three passes, all idempotent:
 **Pass 2 — Topic deduplication + hierarchy:**
 - Group `Topic` nodes where `apoc.text.levenshteinDistance(a.name, b.name) < 2` (tighter threshold)
 - Merge duplicates
-- gpt-4o-mini call: given the list of all current Topic names, assign each to a broad `Category` (e.g., "LLMs" → "AI/ML", "Algorithm Practice" → "Computer Science")
+- gpt-4o call: given the list of all current Topic names, assign each to a broad `Category` (e.g., "LLMs" → "AI/ML", "Algorithm Practice" → "Computer Science") — gpt-4o used here (not mini) for more consistent, nuanced categorization across maintenance runs
 - `MERGE (t)-[:BELONGS_TO]->(c:Category {name: $category})`
 
 **Pass 3 — Goal deduplication:**
