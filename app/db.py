@@ -46,6 +46,8 @@ EXTRACTION_TABLES = (
     "productivity_metrics",
     "events",
     "todos",
+    "event_topics",
+    "event_goal_contributions",
 )
 
 
@@ -167,3 +169,29 @@ def init_db() -> None:
             cursor.execute("PRAGMA table_info(todos)")
             if not any(r[1] == col for r in cursor.fetchall()):
                 cursor.execute(f"ALTER TABLE todos ADD COLUMN {col} {definition}")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS event_topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day TEXT NOT NULL,
+                event_title TEXT NOT NULL,
+                topic TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS event_goal_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day TEXT NOT NULL,
+                event_title TEXT NOT NULL,
+                goal_name TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS goals (
+                name TEXT PRIMARY KEY,
+                discovered_on TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
