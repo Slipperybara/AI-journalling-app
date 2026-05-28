@@ -26,6 +26,22 @@ class EventItem(BaseModel):
     description: str = Field(description="One or two sentence elaboration grounded in what the user said.")
     tags: str = Field(description="Comma-separated tags. May be empty string.")
     event_type: str = Field(description="Must be one of: idea, location, milestone, media")
+    topics: List[str] = Field(
+        default_factory=list,
+        description=(
+            "1-3 specific conceptual topic tags for this event. "
+            "Use precise terms, e.g. ['LLMs', 'RAG'], ['Algorithm Practice'], ['System Design']. "
+            "Empty list if the event has no clear intellectual or skill domain."
+        ),
+    )
+    contributes_to_goals: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Names of tracked goals this event directly contributes toward. "
+            "Only include names that exactly match a goal from the provided goals list. "
+            "Empty list if none match."
+        ),
+    )
 
 
 class EmotionalAnalysis(BaseModel):
@@ -60,6 +76,15 @@ class JournalParserResponse(BaseModel):
     emotions: EmotionalAnalysis
     health: HealthMetrics
     productivity: ProductivityMetrics
+    discovered_goals: List[str] = Field(
+        default_factory=list,
+        description=(
+            "New long-term goals the user explicitly stated today, "
+            "e.g. 'Jane Street Prep', 'OGP Interview'. "
+            "Only extract goals the user clearly named as objectives. "
+            "Do NOT include todos or one-off tasks here."
+        ),
+    )
 
 
 class MessageCreate(BaseModel):
