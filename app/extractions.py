@@ -64,3 +64,24 @@ def store_extractions(parsed: JournalParserResponse, day: str) -> None:
                 INSERT INTO todos (day, task_description, due_date, created_at)
                 VALUES (?, ?, ?, ?)
             """, (day, t.task, t.due_date, datetime.now().isoformat()))
+
+        for goal_name in (parsed.discovered_goals or []):
+            if goal_name.strip():
+                cursor.execute(
+                    "INSERT OR IGNORE INTO goals (name, discovered_on) VALUES (?, ?)",
+                    (goal_name.strip(), day),
+                )
+
+        for ev in parsed.events:
+            for topic in (ev.topics or []):
+                if topic.strip():
+                    cursor.execute(
+                        "INSERT INTO event_topics (day, event_title, topic) VALUES (?, ?, ?)",
+                        (day, ev.title, topic.strip()),
+                    )
+            for goal_name in (ev.contributes_to_goals or []):
+                if goal_name.strip():
+                    cursor.execute(
+                        "INSERT INTO event_goal_contributions (day, event_title, goal_name) VALUES (?, ?, ?)",
+                        (day, ev.title, goal_name.strip()),
+                    )
