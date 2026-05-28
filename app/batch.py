@@ -13,6 +13,7 @@ from .db import EXTRACTION_TABLES, connect
 from .extractions import store_extractions
 from .parser import parse_day_content
 from .time_buckets import current_bucket
+from . import graph_batch, graph_maintenance
 
 
 def _fetch_day_messages(day: str) -> List[dict]:
@@ -132,15 +133,29 @@ def backfill_all_message_days() -> int:
 
 
 def run_scheduled_batch() -> None:
-    """Cron entrypoint. Parses yesterday's bucket then carries over unfilled todos."""
+    """Cron entrypoint. Parses yesterday's bucket, writes to Neo4j, carries over todos."""
     yesterday = (current_bucket() - timedelta(days=1)).isoformat()
     today = current_bucket().isoformat()
+
+    parse_ok = False
     try:
         parse_day(yesterday)
         print(f"[batch] scheduled parse complete for {yesterday}")
+        parse_ok = True
     except Exception:
         print(f"[batch] scheduled parse failed for {yesterday}")
         traceback.print_exc()
+
+    if parse_ok:
+        try:
+            result = graph_batch.write_day(yesterday)
+            print(f"[batch] graph write: {result}")
+            maint = graph_maintenance.run()
+            print(f"[batch] maintenance: {maint}")
+        except Exception:
+            print(f"[batch] graph pipeline failed for {yesterday}")
+            traceback.print_exc()
+
     try:
         n = carryover_unfilled_todos(yesterday, today)
         if n:
