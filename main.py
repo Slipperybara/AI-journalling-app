@@ -1,14 +1,10 @@
-"""MindForge AI — FastAPI entrypoint.
-
-Wires the FastAPI app: middleware, schema bootstrap, daily-batch scheduler,
-and the route modules under `app/routers/`. All domain logic lives in the
-`app/` package.
-"""
+"""MindForge AI — FastAPI entrypoint."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import scheduler
 from app.db import init_db
+from app.graph_db import close as graph_close, init_graph
 from app.routers import admin, conversations, dashboard, messages, todos
 
 
@@ -23,6 +19,7 @@ app.add_middleware(
 )
 
 init_db()
+init_graph()
 
 app.include_router(conversations.router)
 app.include_router(messages.router)
@@ -39,6 +36,7 @@ def _startup() -> None:
 @app.on_event("shutdown")
 def _shutdown() -> None:
     scheduler.stop()
+    graph_close()
 
 
 if __name__ == "__main__":
