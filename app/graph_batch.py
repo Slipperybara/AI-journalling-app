@@ -1,6 +1,5 @@
 """Write pipeline: SQLite extraction rows → Neo4j graph for one day-bucket."""
 import hashlib
-import json
 from datetime import date, timedelta
 
 from .db import connect, loads
@@ -40,6 +39,9 @@ def write_day(day: str) -> dict:
         goal_rows = conn.execute(
             "SELECT event_title, goal_name FROM event_goal_contributions WHERE day = ?", (day,)
         ).fetchall()
+        goals = conn.execute(
+            "SELECT name, discovered_on FROM goals"
+        ).fetchall()
 
     topics_by_event: dict[str, list[str]] = {}
     for r in topic_rows:
@@ -52,6 +54,7 @@ def write_day(day: str) -> dict:
     with graph_connect() as session:
         _write_day_node(session, day, productivity)
         _write_next_day_chain(session, day)
+        _write_goals(session, goals)
         if emotion:
             _write_emotion(session, day, emotion)
         if health:
@@ -60,6 +63,15 @@ def write_day(day: str) -> dict:
             _write_event(session, day, event, topics_by_event, goals_by_event)
 
     return {"status": "ok", "day": day, "events": len(events)}
+
+
+def _write_goals(session, goals) -> None:
+    """MERGE each goal node; set discovered_on only on first create."""
+    for row in goals:
+        session.run("""
+            MERGE (g:Goal {name: $name})
+            ON CREATE SET g.discovered_on = $discovered_on
+        """, name=row["name"], discovered_on=row["discovered_on"])
 
 
 def _write_day_node(session, day: str, productivity) -> None:
@@ -90,39 +102,39 @@ def _write_next_day_chain(session, day: str) -> None:
 
 
 def _write_emotion(session, day: str, emotion) -> None:
-    session.run("""
-        MATCH (d:Day {date: $day})-[:HAD_EMOTION]->(old:EmotionState)
-        DETACH DELETE old
-    """, day=day)
-    session.run("""
-        MATCH (d:Day {date: $day})
-        MATCH (q:EmotionQuadrant {name: $quadrant})
-        CREATE (es:EmotionState {
-            valence:              $valence,
-            arousal:              $arousal,
-            cognitive_labels:     $labels,
-            cognitive_triggers:   $triggers,
-            social_interactions:  $social
-        })
-        MERGE (d)-[:HAD_EMOTION]->(es)
-        MERGE (es)-[:IN_QUADRANT]->(q)
-    """,
-        day=day,
-        quadrant=emotion["primary_quadrant"],
-        valence=emotion["valence"],
-        arousal=emotion["arousal"],
-        labels=loads(emotion["cognitive_labels"]),
-        triggers=loads(emotion["cognitive_triggers"]),
-        social=loads(emotion["social_interactions"]),
-    )
+    # Delete-then-create in one transaction so a crash mid-write cannot leave
+    # the Day without an EmotionState. CREATE is mandatory because each batch
+    # should produce a fresh EmotionState (old values may be stale).
+    with session.begin_transaction() as tx:
+        tx.run("""
+            MATCH (d:Day {date: $day})-[:HAD_EMOTION]->(old:EmotionState)
+            DETACH DELETE old
+        """, day=day)
+        tx.run("""
+            MATCH (d:Day {date: $day})
+            MATCH (q:EmotionQuadrant {name: $quadrant})
+            CREATE (es:EmotionState {
+                valence:              $valence,
+                arousal:              $arousal,
+                cognitive_labels:     $labels,
+                cognitive_triggers:   $triggers,
+                social_interactions:  $social
+            })
+            MERGE (d)-[:HAD_EMOTION]->(es)
+            MERGE (es)-[:IN_QUADRANT]->(q)
+        """,
+            day=day,
+            quadrant=emotion["primary_quadrant"],
+            valence=emotion["valence"],
+            arousal=emotion["arousal"],
+            labels=loads(emotion["cognitive_labels"]),
+            triggers=loads(emotion["cognitive_triggers"]),
+            social=loads(emotion["social_interactions"]),
+        )
+        tx.commit()
 
 
 def _write_health(session, day: str, health) -> None:
-    session.run("""
-        MATCH (d:Day {date: $day})-[:HAD_HEALTH]->(old:HealthState)
-        DETACH DELETE old
-    """, day=day)
-
     sleep = health["sleep_quality"]
     exercise = health["exercise_type"]
     diet = health["diet_quality"]
@@ -153,7 +165,14 @@ def _write_health(session, day: str, health) -> None:
         query += " WITH hs MATCH (dq:DietQuality {type: $diet}) MERGE (hs)-[:HAD_DIET]->(dq)"
         params["diet"] = diet
 
-    session.run(query, params)  # pass as positional dict — neo4j driver param convention
+    # Delete-then-create in one transaction — see _write_emotion.
+    with session.begin_transaction() as tx:
+        tx.run("""
+            MATCH (d:Day {date: $day})-[:HAD_HEALTH]->(old:HealthState)
+            DETACH DELETE old
+        """, day=day)
+        tx.run(query, params)
+        tx.commit()
 
 
 def _write_event(session, day: str, event, topics_by_event: dict, goals_by_event: dict) -> None:
@@ -183,9 +202,12 @@ def _write_event(session, day: str, event, topics_by_event: dict, goals_by_event
         """, name=topic.lower().strip(), cid=cid)
 
     for goal_name in goals_by_event.get(event["title"], []):
+        # ON CREATE SET handles the edge case where an event references a goal
+        # that wasn't pre-seeded by _write_goals — keeps schema invariant intact.
         session.run("""
             MERGE (g:Goal {name: $name})
+            ON CREATE SET g.discovered_on = $day
             WITH g
             MATCH (e:Event {canonical_id: $cid})
             MERGE (e)-[:CONTRIBUTES_TO]->(g)
-        """, name=goal_name, cid=cid)
+        """, name=goal_name, cid=cid, day=day)
