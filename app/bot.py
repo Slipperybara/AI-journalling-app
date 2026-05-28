@@ -233,12 +233,12 @@ def store_assistant_message(conversation_id: int, content: str) -> int:
         return cursor.lastrowid
 
 
-def process_message_background(conversation_id: int) -> None:
-    """Background-task entrypoint after a user message. One LLM call: the reply.
-    Structured extraction is deferred to the nightly batch (`app.batch`)."""
+def process_message_background(conversation_id: int, message_content: str) -> None:
+    """Background-task entrypoint after a user message. Routes through LangGraph:
+    journaling → existing bot; analytical → Neo4j Cypher pipeline."""
     try:
-        reply = generate_bot_reply(conversation_id)
-        store_assistant_message(conversation_id, reply)
+        from .langgraph_flow import process_message
+        process_message(conversation_id, message_content)
     except Exception as e:
         print(f"[BG] Reply error for conv {conversation_id}: {e}")
         store_assistant_message(

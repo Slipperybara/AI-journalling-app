@@ -41,5 +41,5 @@ async def post_message(conv_id: int, msg: MessageCreate, background_tasks: Backg
         """, (conv_id, msg.content, created_at))
         msg_id = cursor.lastrowid
 
-    background_tasks.add_task(process_message_background, conv_id)
+    background_tasks.add_task(process_message_background, conv_id, msg.content)
     return {"id": msg_id, "role": "user", "content": msg.content, "created_at": created_at}
