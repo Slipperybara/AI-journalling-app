@@ -1,0 +1,188 @@
+"""LangGraph orchestration: routes each user message to the journaling bot
+or the analytical Cypher pipeline, then writes the final reply to SQLite."""
+import json
+from typing import Any, TypedDict
+
+from langgraph.graph import END, StateGraph
+
+from .agents.cypher_agent import correct_cypher, evaluate_result, generate_cypher
+from .agents.synthesizer import synthesize_response
+from .bot import assemble_bot_context, generate_bot_reply, store_assistant_message
+from .core import client
+from .graph_db import graph_connect
+
+
+class GraphState(TypedDict):
+    message: str
+    conversation_id: int
+    intent: str               # "journaling" | "analytical"
+    sqlite_context: str       # today's transcript + open todos
+    cypher_query: str
+    graph_result: Any         # list of dicts from Neo4j
+    query_error: str          # empty string when no error
+    retry_count: int          # Cypher self-correction attempts
+    eval_retry_count: int     # evaluation broadening attempts
+    eval_passed: bool
+    eval_hint: str
+    final_response: str
+
+
+# ── Node functions ──────────────────────────────────────────────────────────
+
+def _router_node(state: GraphState) -> dict:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Classify the message as 'journaling' (user sharing info about their day) "
+                    "or 'analytical' (user asking a question about patterns, history, or trends). "
+                    "If the message contains ANY analytical intent, respond 'analytical'. "
+                    "Respond with exactly one word: journaling or analytical."
+                ),
+            },
+            {"role": "user", "content": state["message"]},
+        ],
+        temperature=0,
+    )
+    intent = response.choices[0].message.content.strip().lower()
+    if intent not in ("journaling", "analytical"):
+        intent = "journaling"
+    return {"intent": intent}
+
+
+def _bot_node(state: GraphState) -> dict:
+    reply = generate_bot_reply(state["conversation_id"])
+    store_assistant_message(state["conversation_id"], reply)
+    return {"final_response": reply}
+
+
+def _context_fetcher_node(state: GraphState) -> dict:
+    ctx = assemble_bot_context()
+    sqlite_context = (
+        "Today's conversation:\n"
+        + json.dumps(ctx["today_transcript"], indent=2)
+        + "\n\nOpen todos:\n"
+        + json.dumps(ctx["pending_todos"], indent=2)
+    )
+    return {"sqlite_context": sqlite_context}
+
+
+def _cypher_agent_node(state: GraphState) -> dict:
+    hint = state.get("eval_hint", "") if state.get("eval_retry_count", 0) > 0 else ""
+    cypher = generate_cypher(state["message"], eval_hint=hint)
+    return {"cypher_query": cypher, "query_error": ""}
+
+
+def _db_executor_node(state: GraphState) -> dict:
+    try:
+        with graph_connect() as session:
+            result = session.run(state["cypher_query"])
+            records = [dict(r) for r in result]
+        return {"graph_result": records, "query_error": ""}
+    except Exception as exc:
+        return {
+            "graph_result": [],
+            "query_error": str(exc),
+            "retry_count": state.get("retry_count", 0) + 1,
+        }
+
+
+def _self_correct_node(state: GraphState) -> dict:
+    fixed = correct_cypher(state["cypher_query"], state["query_error"])
+    return {"cypher_query": fixed, "query_error": ""}
+
+
+def _evaluator_node(state: GraphState) -> dict:
+    verdict = evaluate_result(state["message"], state.get("graph_result", []))
+    return {
+        "eval_passed": verdict.get("satisfied", True),
+        "eval_hint": verdict.get("hint", ""),
+        "eval_retry_count": state.get("eval_retry_count", 0) + 1,
+    }
+
+
+def _synthesizer_node(state: GraphState) -> dict:
+    failed = bool(state.get("query_error")) and state.get("retry_count", 0) >= 3
+    reply = synthesize_response(
+        user_message=state["message"],
+        graph_result=state.get("graph_result", []),
+        sqlite_context=state.get("sqlite_context", ""),
+        failed=failed,
+    )
+    store_assistant_message(state["conversation_id"], reply)
+    return {"final_response": reply}
+
+
+# ── Conditional routing functions ───────────────────────────────────────────
+
+def _route_after_router(state: GraphState) -> str:
+    return "bot_node" if state["intent"] == "journaling" else "context_fetcher_node"
+
+
+def _route_after_executor(state: GraphState) -> str:
+    if state.get("query_error"):
+        return "self_correct_node" if state.get("retry_count", 0) < 3 else "synthesizer_node"
+    return "evaluator_node"
+
+
+def _route_after_evaluator(state: GraphState) -> str:
+    if state.get("eval_passed", True):
+        return "synthesizer_node"
+    if state.get("eval_retry_count", 0) < 2:
+        return "cypher_agent_node"
+    return "synthesizer_node"
+
+
+# ── Graph assembly ───────────────────────────────────────────────────────────
+
+def _build_graph() -> StateGraph:
+    builder = StateGraph(GraphState)
+
+    builder.add_node("router_node", _router_node)
+    builder.add_node("bot_node", _bot_node)
+    builder.add_node("context_fetcher_node", _context_fetcher_node)
+    builder.add_node("cypher_agent_node", _cypher_agent_node)
+    builder.add_node("db_executor_node", _db_executor_node)
+    builder.add_node("self_correct_node", _self_correct_node)
+    builder.add_node("evaluator_node", _evaluator_node)
+    builder.add_node("synthesizer_node", _synthesizer_node)
+
+    builder.set_entry_point("router_node")
+    builder.add_conditional_edges("router_node", _route_after_router)
+
+    builder.add_edge("bot_node", END)
+    builder.add_edge("context_fetcher_node", "cypher_agent_node")
+    builder.add_edge("cypher_agent_node", "db_executor_node")
+    builder.add_conditional_edges("db_executor_node", _route_after_executor)
+    builder.add_edge("self_correct_node", "db_executor_node")
+    builder.add_conditional_edges("evaluator_node", _route_after_evaluator)
+    builder.add_edge("synthesizer_node", END)
+
+    return builder.compile()
+
+
+_graph = _build_graph()
+
+
+# ── Public entrypoint ────────────────────────────────────────────────────────
+
+def process_message(conversation_id: int, message_content: str) -> None:
+    """Entrypoint called from bot.process_message_background().
+    Routes the message and writes the assistant reply to the messages table."""
+    initial_state: GraphState = {
+        "message": message_content,
+        "conversation_id": conversation_id,
+        "intent": "",
+        "sqlite_context": "",
+        "cypher_query": "",
+        "graph_result": [],
+        "query_error": "",
+        "retry_count": 0,
+        "eval_retry_count": 0,
+        "eval_passed": False,
+        "eval_hint": "",
+        "final_response": "",
+    }
+    _graph.invoke(initial_state)
