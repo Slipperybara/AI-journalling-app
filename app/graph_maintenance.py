@@ -14,10 +14,12 @@ def run() -> dict:
 
 
 def _get_similar_pairs(session, label: str, prop: str, threshold: int) -> list[tuple]:
+    # apoc.text.distance is Levenshtein distance — same semantics as the
+    # now-removed apoc.text.levenshteinDistance in APOC 2026.04+.
     result = session.run(f"""
         MATCH (a:{label}), (b:{label})
         WHERE id(a) < id(b)
-          AND apoc.text.levenshteinDistance(a.{prop}, b.{prop}) < $threshold
+          AND apoc.text.distance(a.{prop}, b.{prop}) < $threshold
         RETURN a.{prop} AS name_a, b.{prop} AS name_b
     """, threshold=threshold)
     return [(r["name_a"], r["name_b"]) for r in result]
