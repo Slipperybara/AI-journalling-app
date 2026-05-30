@@ -12,7 +12,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from . import db
-from .batch import backfill_all_message_days, catch_up_parses, run_scheduled_batch
+from .batch import (
+    backfill_all_message_days,
+    catch_up_carryover,
+    catch_up_parses,
+    run_scheduled_batch,
+)
 from .core import settings
 
 
@@ -24,6 +29,7 @@ def _startup_parses() -> None:
         count = backfill_all_message_days()
         print(f"[scheduler] backfill complete: {count} day(s)")
     catch_up_parses()
+    catch_up_carryover()
 
 
 def start() -> None:

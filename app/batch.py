@@ -59,6 +59,29 @@ def carryover_unfilled_todos(from_day: str, to_day: str) -> int:
         return cursor.rowcount
 
 
+def catch_up_carryover(days_back: int = 7) -> int:
+    """Sweep N days backward, ensuring unfulfilled todos chain forward day by day.
+
+    Each adjacent-pair carryover is idempotent, so this safely covers gaps
+    introduced when the 6 AM scheduler missed a day (server down, laptop
+    asleep, etc.). Walks oldest -> newest so each step's carry can be picked
+    up by the next step's source-day query."""
+    today = current_bucket()
+    total = 0
+    for delta in range(days_back, 0, -1):
+        from_day = (today - timedelta(days=delta)).isoformat()
+        to_day = (today - timedelta(days=delta - 1)).isoformat()
+        try:
+            n = carryover_unfilled_todos(from_day, to_day)
+            if n:
+                print(f"[carryover] caught up {n} todo(s) {from_day} -> {to_day}")
+                total += n
+        except Exception:
+            print(f"[carryover] failed {from_day} -> {to_day}")
+            traceback.print_exc()
+    return total
+
+
 def _mark_parse_log(day: str, status: str, error: str = None) -> None:
     with connect() as conn:
         cursor = conn.cursor()
