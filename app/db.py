@@ -45,10 +45,12 @@ EXTRACTION_TABLES = (
     "health_metrics",
     "productivity_metrics",
     "events",
-    "todos",
     "event_topics",
     "event_goal_contributions",
 )
+# `todos` and `goals` are intentionally excluded — both are user-managed
+# (added via the dashboard or kept across carryover) and re-parsing a day
+# must not wipe them.
 
 
 def _has_legacy_extraction_schema(cursor: sqlite3.Cursor) -> bool:

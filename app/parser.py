@@ -6,19 +6,13 @@ from .models import HealthMetrics, JournalParserResponse, ProductivityMetrics
 PARSER_SYSTEM_BATCH = (
     "You are a strict structured-extraction assistant. You will be given the user's chat messages "
     "from across a full day (timestamps included; conversations separated by '---'). Produce ONE "
-    "consolidated extraction describing the WHOLE day: a single set of todos, events, emotions, "
-    "health metrics, and productivity metrics. When the user gives multiple data points for the "
-    "same field (e.g., reports sleep quality twice), use the value most consistent with the broader "
-    "day. ONLY populate fields with content the user actually mentioned. Use null / empty list for "
-    "anything not present. Do NOT invent or infer beyond what was said. Always provide "
+    "consolidated extraction describing the WHOLE day: events, emotions, health metrics, and "
+    "productivity metrics. When the user gives multiple data points for the same field (e.g., "
+    "reports sleep quality twice), use the value most consistent with the broader day. ONLY "
+    "populate fields with content the user actually mentioned. Use null / empty list for anything "
+    "not present. Do NOT invent or infer beyond what was said. Always provide "
     "valence/arousal/primary_quadrant — pick values that best summarize the day's overall affect; "
-    "use 0.0 / 'Recovery & Clarity' if affect is fully absent. "
-    "For todos specifically: emit ONLY daily executables each taking under 3 hours. "
-    "If the user mentions a project or goal that would exceed 3 hours (e.g. 'build X', "
-    "'finish Y project', 'prepare for Z'), decompose it into concrete sub-tasks each under "
-    "3 hours and emit each as a separate TodoItem. If you cannot infer sub-tasks, emit a "
-    "single first-next-action todo (e.g. 'Research options for X — 1h'). "
-    "Never emit a multi-day project as a single todo."
+    "use 0.0 / 'Recovery & Clarity' if affect is fully absent."
 )
 
 
@@ -49,9 +43,9 @@ def parse_day_content(content: str) -> JournalParserResponse:
     if active_goals:
         goals_addendum = (
             f"\n\nCurrently active long-term goals: {', '.join(active_goals)}. "
-            "When filling contributes_to_goals on each event, only use names from this active list exactly as written. "
-            "Do not propose contributes_to_goals entries that aren't in this list. "
-            "Add new goal names to discovered_goals only if the user explicitly states a new objective today."
+            "When filling contributes_to_goals on each event, only use names from this active list "
+            "exactly as written. Do not propose contributes_to_goals entries that aren't in this list. "
+            "Goals themselves are user-managed — do not invent or propose new goal names."
         )
 
     completion = client.beta.chat.completions.parse(

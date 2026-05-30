@@ -1,24 +1,14 @@
 """Pydantic schemas for the structured-output parser.
 
 Field(description=...) strings are the LLM instructions — keep them precise.
+
+Todos and goals are user-managed only — the parser no longer emits them.
+Events still extract `contributes_to_goals` so the LLM can link days of work
+back to the user's manually-curated goals list.
 """
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
-
-
-class TodoItem(BaseModel):
-    task: str = Field(
-        description=(
-            "A concrete, atomic, daily executable taking under 3 hours. "
-            "If the user mentions a larger project or goal, break it into separate "
-            "sub-tasks each under 3 hours — emit one TodoItem per sub-task. "
-            "Never emit a single todo for anything that would take more than 3 hours. "
-            "If sub-tasks cannot be inferred, emit a single first-next-action "
-            "(e.g. 'Research options for X — 1h'). Skip vague intentions with no clear next action."
-        )
-    )
-    due_date: Optional[str] = Field(description="YYYY-MM-DD if explicitly mentioned, else null.")
 
 
 class EventItem(BaseModel):
@@ -71,20 +61,10 @@ class ProductivityMetrics(BaseModel):
 
 
 class JournalParserResponse(BaseModel):
-    todos: List[TodoItem]
     events: List[EventItem]
     emotions: EmotionalAnalysis
     health: HealthMetrics
     productivity: ProductivityMetrics
-    discovered_goals: List[str] = Field(
-        default_factory=list,
-        description=(
-            "New long-term goals the user explicitly stated today, "
-            "e.g. 'Jane Street Prep', 'OGP Interview'. "
-            "Only extract goals the user clearly named as objectives. "
-            "Do NOT include todos or one-off tasks here."
-        ),
-    )
 
 
 class MessageCreate(BaseModel):
