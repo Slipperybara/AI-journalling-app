@@ -323,11 +323,20 @@ def generate_bot_reply(
     graph_facts_block = ""
     if graph_synthesis and graph_synthesis.strip():
         graph_facts_block = (
-            "\nGRAPH_FACTS (factual digest pulled from the user's history graph in response "
-            "to the user's most recent message — weave the relevant pieces into your reply "
-            "under your Q&A priority, then continue with LISTENER + INTERVIEWER. The digest "
-            "is internal context; do not dump it verbatim or quote in bullets — extract only "
-            "what actually helps the user's question):\n"
+            "\nGRAPH_DIGEST (pre-computed from the user's history graph in response to the "
+            "user's most recent message — three labeled sections: FACTS, OBSERVATIONS, "
+            "SUGGESTIONS).\n\n"
+            "How to use it:\n"
+            "  - Use FACTS to answer the user's question under your Q&A priority. Do not "
+            "dump them verbatim or quote in bullets — extract what actually helps.\n"
+            "  - OBSERVATIONS are your advisor lens, not user-facing prose. Lean on them "
+            "to inform your tone and angle.\n"
+            "  - SUGGESTIONS are CANDIDATES. If one is genuinely relevant and grounded in "
+            "the user's question, weave it naturally into your reply — but only ONE, and "
+            "only when it adds value. If suggestions feel generic or off-topic, omit them. "
+            "Default to omitting.\n"
+            "After answering, continue with LISTENER + INTERVIEWER as normal.\n\n"
+            "DIGEST:\n"
             + graph_synthesis.strip()
             + "\n"
         )

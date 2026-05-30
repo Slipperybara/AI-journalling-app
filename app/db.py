@@ -96,6 +96,18 @@ def init_db() -> None:
             )
         """)
 
+        # Tracks per-day morning brief posting so cron + catch-up + admin
+        # re-triggers stay idempotent.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS morning_brief_log (
+                day TEXT PRIMARY KEY,
+                posted_at TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT
+            )
+        """)
+
         if _has_legacy_extraction_schema(cursor):
             for t in EXTRACTION_TABLES:
                 cursor.execute(f"DROP TABLE IF EXISTS {t}")

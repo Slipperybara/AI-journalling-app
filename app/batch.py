@@ -179,6 +179,18 @@ def run_scheduled_batch() -> None:
             print(f"[batch] graph pipeline failed for {yesterday}")
             traceback.print_exc()
 
+    # Morning brief: post today's automated welcome with yesterday's analysis,
+    # active-goal momentum, and one grounded suggestion. Idempotent via
+    # morning_brief_log; safe on cron + catch-up + manual triggers. Failure
+    # here must NOT block the carryover step below.
+    try:
+        from . import morning_brief
+        brief = morning_brief.post_morning_brief(today)
+        print(f"[batch] morning brief: {brief}")
+    except Exception:
+        print(f"[batch] morning brief failed for {today}")
+        traceback.print_exc()
+
     try:
         n = carryover_unfilled_todos(yesterday, today)
         if n:

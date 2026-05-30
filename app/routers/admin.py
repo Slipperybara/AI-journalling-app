@@ -7,6 +7,7 @@ from ..batch import parse_day
 from ..core import settings
 from ..day_messages import get_days_with_messages, get_messages_for_day
 from ..db import connect, loads
+from .. import morning_brief
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -20,6 +21,16 @@ async def trigger_parse_day(day: str):
         return parse_day(day)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Parse failed: {e}")
+
+
+@router.post("/morning-brief/{day}")
+async def trigger_morning_brief(day: str):
+    """Manually run the morning brief for one day-bucket. Idempotent via
+    morning_brief_log — returns the existing conversation_id on re-trigger."""
+    try:
+        return morning_brief.post_morning_brief(day)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Morning brief failed: {e}")
 
 
 @router.get("/inspect/days")
