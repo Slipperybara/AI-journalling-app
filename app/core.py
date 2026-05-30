@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "mindforge"
+    max_active_goals: int = 3
 
     class Config:
         env_file = ".env"

@@ -400,13 +400,228 @@ function TypingDots() {
 }
 
 function DashboardView({ data }) {
-  const { emotional, health, productivity, events, todos: initialTodos } = data;
+  const { emotional, health, productivity, events, todos: initialTodos, goals: initialGoals } = data;
   return (
     <div className="flex-1 overflow-y-auto px-8 py-7 space-y-8">
       <div className="max-w-5xl mx-auto space-y-8">
+        <GoalsPanel initialGoals={initialGoals} />
         <TodoPanel initialTodos={initialTodos} />
         <WeeklySummary emotional={emotional} health={health} productivity={productivity} events={events} />
       </div>
+    </div>
+  );
+}
+
+function GoalsPanel({ initialGoals }) {
+  const empty = { active: [], fulfilled: [], candidate: [] };
+  const [goalsByStatus, setGoalsByStatus] = useState({ ...empty, ...(initialGoals || {}) });
+  const [addInput, setAddInput] = useState('');
+  const [hoveredName, setHoveredName] = useState(null);
+
+  const activeCount = goalsByStatus.active.length;
+  const isCapFull = activeCount >= 3;
+  const totalCount = activeCount + goalsByStatus.candidate.length + goalsByStatus.fulfilled.length;
+
+  const dropByName = (state, name) => ({
+    active: state.active.filter(g => g.name !== name),
+    candidate: state.candidate.filter(g => g.name !== name),
+    fulfilled: state.fulfilled.filter(g => g.name !== name),
+  });
+
+  const handleFulfill = async (goal) => {
+    const snapshot = goalsByStatus;
+    setGoalsByStatus(prev => {
+      const cleaned = dropByName(prev, goal.name);
+      cleaned.fulfilled = [{ ...goal, status: 'fulfilled', fulfilled_at: new Date().toISOString() }, ...cleaned.fulfilled];
+      return cleaned;
+    });
+    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}/fulfill`, { method: 'PATCH' });
+    if (!res.ok) {
+      setGoalsByStatus(snapshot);
+      return;
+    }
+    const updated = await res.json();
+    setGoalsByStatus(prev => {
+      const cleaned = dropByName(prev, updated.name);
+      cleaned[updated.status] = [updated, ...cleaned[updated.status]];
+      return cleaned;
+    });
+  };
+
+  const handlePromote = async (goal) => {
+    if (isCapFull) return;
+    const snapshot = goalsByStatus;
+    setGoalsByStatus(prev => {
+      const cleaned = dropByName(prev, goal.name);
+      cleaned.active = [{ ...goal, status: 'active' }, ...cleaned.active];
+      return cleaned;
+    });
+    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}/promote`, { method: 'PATCH' });
+    if (!res.ok) {
+      setGoalsByStatus(snapshot);
+      return;
+    }
+    const updated = await res.json();
+    setGoalsByStatus(prev => {
+      const cleaned = dropByName(prev, updated.name);
+      cleaned[updated.status] = [updated, ...cleaned[updated.status]];
+      return cleaned;
+    });
+  };
+
+  const handleRemove = async (goal) => {
+    const snapshot = goalsByStatus;
+    setGoalsByStatus(prev => dropByName(prev, goal.name));
+    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}`, { method: 'DELETE' });
+    if (!res.ok) setGoalsByStatus(snapshot);
+  };
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    const text = addInput.trim();
+    if (!text) return;
+    setAddInput('');
+    const res = await fetch(`${API}/api/goals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: text }),
+    });
+    if (!res.ok) return;
+    const created = await res.json();
+    setGoalsByStatus(prev => {
+      const cleaned = dropByName(prev, created.name);
+      cleaned[created.status] = [created, ...cleaned[created.status]];
+      return cleaned;
+    });
+  };
+
+  return (
+    <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-900">Goals</h2>
+        <span className={`text-xs ${isCapFull ? 'text-amber-600' : 'text-slate-400'}`}>
+          {activeCount} of 3 active
+        </span>
+      </div>
+
+      <div className="space-y-1 min-h-[60px]">
+        {totalCount === 0 && (
+          <p className="text-xs text-slate-400 py-3 text-center">No goals yet. Add one below to start tracking.</p>
+        )}
+
+        {goalsByStatus.active.map(goal => (
+          <GoalRow
+            key={goal.name}
+            goal={goal}
+            accent="emerald"
+            hoveredName={hoveredName}
+            setHoveredName={setHoveredName}
+            actions={
+              <>
+                <button onClick={() => handleFulfill(goal)} className="text-xs text-emerald-600 hover:text-emerald-700">✓ Fulfill</button>
+                <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
+              </>
+            }
+          />
+        ))}
+
+        {goalsByStatus.candidate.length > 0 && (
+          <>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 pt-2 pl-2">Queued (not tracked in graph)</div>
+            {goalsByStatus.candidate.map(goal => (
+              <GoalRow
+                key={goal.name}
+                goal={goal}
+                accent="amber"
+                hoveredName={hoveredName}
+                setHoveredName={setHoveredName}
+                actions={
+                  <>
+                    <button
+                      onClick={() => handlePromote(goal)}
+                      disabled={isCapFull}
+                      title={isCapFull ? '3 active already; fulfill or remove one first' : undefined}
+                      className="text-xs text-amber-600 hover:text-amber-700 disabled:text-slate-300 disabled:cursor-not-allowed"
+                    >↑ Promote</button>
+                    <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
+                  </>
+                }
+              />
+            ))}
+          </>
+        )}
+
+        {goalsByStatus.fulfilled.length > 0 && (
+          <>
+            <div className="text-[10px] uppercase tracking-wider text-slate-400 pt-2 pl-2">Fulfilled</div>
+            {goalsByStatus.fulfilled.map(goal => (
+              <GoalRow
+                key={goal.name}
+                goal={goal}
+                accent="slate"
+                strike
+                hoveredName={hoveredName}
+                setHoveredName={setHoveredName}
+                actions={
+                  <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
+                }
+              />
+            ))}
+          </>
+        )}
+      </div>
+
+      <form onSubmit={handleAdd} className="flex items-center gap-2 border-t border-slate-100 pt-3">
+        <input
+          type="text"
+          value={addInput}
+          onChange={e => setAddInput(e.target.value)}
+          placeholder="+ Add a goal…"
+          className="flex-1 text-sm text-slate-700 placeholder-slate-400 bg-transparent outline-none"
+        />
+        {isCapFull && addInput.trim() && (
+          <span className="text-[10px] text-amber-600">Will queue as candidate</span>
+        )}
+        <button
+          type="submit"
+          disabled={!addInput.trim()}
+          className="text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-200 text-white rounded-md transition-colors"
+        >
+          Add
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function GoalRow({ goal, accent, strike, hoveredName, setHoveredName, actions }) {
+  const isHovered = hoveredName === goal.name;
+  const dotColors = { emerald: 'bg-emerald-500', amber: 'bg-amber-500', slate: 'bg-slate-300' };
+  return (
+    <div
+      className="flex items-start gap-3 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors group"
+      onMouseEnter={() => setHoveredName(goal.name)}
+      onMouseLeave={() => setHoveredName(null)}
+    >
+      <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotColors[accent]}`} />
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm ${strike ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+          {goal.name}
+        </p>
+        <div className="flex gap-3 mt-0.5">
+          {goal.fulfilled_at && (
+            <span className="text-[10px] text-slate-400">
+              fulfilled {new Date(goal.fulfilled_at).toLocaleDateString()}
+            </span>
+          )}
+          {goal.source === 'agent' && (
+            <span className="text-[10px] text-slate-400">discovered by bot</span>
+          )}
+        </div>
+      </div>
+      {isHovered && (
+        <div className="flex items-center gap-3 flex-shrink-0">{actions}</div>
+      )}
     </div>
   );
 }

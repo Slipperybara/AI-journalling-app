@@ -40,14 +40,17 @@ def is_productivity_meaningful(p: ProductivityMetrics) -> bool:
 def parse_day_content(content: str) -> JournalParserResponse:
     from .db import connect as db_connect
     with db_connect() as conn:
-        rows = conn.execute("SELECT name FROM goals ORDER BY name").fetchall()
-    existing_goals = [r["name"] for r in rows]
+        rows = conn.execute(
+            "SELECT name FROM goals WHERE status = 'active' ORDER BY name"
+        ).fetchall()
+    active_goals = [r["name"] for r in rows]
 
     goals_addendum = ""
-    if existing_goals:
+    if active_goals:
         goals_addendum = (
-            f"\n\nCurrently tracked goals: {', '.join(existing_goals)}. "
-            "When filling contributes_to_goals on each event, only use names from this list exactly as written. "
+            f"\n\nCurrently active long-term goals: {', '.join(active_goals)}. "
+            "When filling contributes_to_goals on each event, only use names from this active list exactly as written. "
+            "Do not propose contributes_to_goals entries that aren't in this list. "
             "Add new goal names to discovered_goals only if the user explicitly states a new objective today."
         )
 

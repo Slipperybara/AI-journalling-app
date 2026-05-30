@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import scheduler
 from app.db import init_db
 from app.graph_db import close as graph_close, init_graph
-from app.routers import admin, conversations, dashboard, messages, todos
+from app.routers import admin, conversations, dashboard, goals, messages, todos
 
 
 app = FastAPI(title="MindForge AI")
@@ -26,6 +26,7 @@ app.include_router(messages.router)
 app.include_router(dashboard.router)
 app.include_router(admin.router)
 app.include_router(todos.router)
+app.include_router(goals.router)
 
 
 @app.on_event("startup")

@@ -40,7 +40,8 @@ def write_day(day: str) -> dict:
             "SELECT event_title, goal_name FROM event_goal_contributions WHERE day = ?", (day,)
         ).fetchall()
         goals = conn.execute(
-            "SELECT name, discovered_on FROM goals"
+            "SELECT name, discovered_on, status, fulfilled_at FROM goals "
+            "WHERE status IN ('active','fulfilled')"
         ).fetchall()
 
     topics_by_event: dict[str, list[str]] = {}
@@ -66,12 +67,21 @@ def write_day(day: str) -> dict:
 
 
 def _write_goals(session, goals) -> None:
-    """MERGE each goal node; set discovered_on only on first create."""
+    """MERGE each goal node, projecting current SQLite status. Only called
+    with rows whose status is active or fulfilled — candidates and removed
+    goals never appear in Neo4j."""
     for row in goals:
         session.run("""
             MERGE (g:Goal {name: $name})
             ON CREATE SET g.discovered_on = $discovered_on
-        """, name=row["name"], discovered_on=row["discovered_on"])
+            SET g.status = $status,
+                g.fulfilled_at = $fulfilled_at
+        """,
+            name=row["name"],
+            status=row["status"],
+            fulfilled_at=row["fulfilled_at"],
+            discovered_on=row["discovered_on"],
+        )
 
 
 def _write_day_node(session, day: str, productivity) -> None:
@@ -202,12 +212,14 @@ def _write_event(session, day: str, event, topics_by_event: dict, goals_by_event
         """, name=topic.lower().strip(), cid=cid)
 
     for goal_name in goals_by_event.get(event["title"], []):
-        # ON CREATE SET handles the edge case where an event references a goal
-        # that wasn't pre-seeded by _write_goals — keeps schema invariant intact.
+        # Strict MATCH: only active goals accumulate new CONTRIBUTES_TO edges.
+        # Fulfilled goals retain their existing edges as historical record but
+        # do not gain new ones. If the goal is missing or not active here,
+        # the MATCH yields no rows and no edge is created.
         session.run("""
-            MERGE (g:Goal {name: $name})
-            ON CREATE SET g.discovered_on = $day
+            MATCH (g:Goal {name: $name})
+            WHERE g.status = 'active'
             WITH g
             MATCH (e:Event {canonical_id: $cid})
             MERGE (e)-[:CONTRIBUTES_TO]->(g)
-        """, name=goal_name, cid=cid, day=day)
+        """, name=goal_name, cid=cid)

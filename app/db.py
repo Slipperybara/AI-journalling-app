@@ -195,3 +195,17 @@ def init_db() -> None:
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
+
+        # Goals lifecycle migration: add status, lifecycle timestamps, and source.
+        # Legal status values: active | fulfilled | removed | candidate.
+        for col, definition in [
+            ("status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("fulfilled_at", "TEXT"),
+            ("removed_at", "TEXT"),
+            ("source", "TEXT NOT NULL DEFAULT 'agent'"),
+        ]:
+            cursor.execute("PRAGMA table_info(goals)")
+            if not any(r[1] == col for r in cursor.fetchall()):
+                cursor.execute(f"ALTER TABLE goals ADD COLUMN {col} {definition}")
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)")

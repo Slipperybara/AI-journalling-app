@@ -6,11 +6,59 @@ from .graph_db import graph_connect
 
 
 def run() -> dict:
-    """Run all three maintenance passes. Safe to call multiple times."""
+    """Run all maintenance passes. Safe to call multiple times.
+
+    Goal reconciliation runs BEFORE goal Levenshtein dedup so the latter
+    operates on a graph that already matches the SQLite source of truth.
+    """
+    reconcile = reconcile_goals()
     events_merged = _deduplicate_events()
     topics_merged = _deduplicate_and_categorise_topics()
     goals_merged = _deduplicate_goals()
-    return {"events_merged": events_merged, "topics_merged": topics_merged, "goals_merged": goals_merged}
+    return {
+        "events_merged": events_merged,
+        "topics_merged": topics_merged,
+        "goals_merged": goals_merged,
+        **reconcile,
+    }
+
+
+def reconcile_goals() -> dict:
+    """Project SQLite goal state into Neo4j and prune orphans.
+
+    SQLite is the source of truth; every goal mutation calls
+    `goals.sync_goal_to_graph` already, but drift can happen if the graph
+    write fails mid-flight or if Neo4j was edited directly. This pass
+    re-projects every SQLite row and removes any Goal node not present in
+    SQLite with status active or fulfilled.
+    """
+    from . import goals as goals_svc
+    from .db import connect
+
+    with connect() as conn:
+        rows = conn.execute("SELECT name, status FROM goals").fetchall()
+
+    # After sync_goal_to_graph runs over every SQLite row, the only Neo4j
+    # Goal nodes still present are the ones SQLite says should be there.
+    # Anything else is an orphan from manual graph edits or earlier drift.
+    expected_in_graph = {
+        r["name"] for r in rows if r["status"] in ("active", "fulfilled")
+    }
+
+    for r in rows:
+        goals_svc.sync_goal_to_graph(r["name"])
+    reconciled = len(rows)
+
+    orphans_deleted = 0
+    with graph_connect() as session:
+        result = session.run("MATCH (g:Goal) RETURN g.name AS name")
+        graph_names = {r["name"] for r in result}
+        for name in graph_names - expected_in_graph:
+            print(f"[reconcile_goals] orphan in graph, deleting: {name}")
+            session.run("MATCH (g:Goal {name: $name}) DETACH DELETE g", name=name)
+            orphans_deleted += 1
+
+    return {"goals_reconciled": reconciled, "goals_orphaned_deleted": orphans_deleted}
 
 
 def _get_similar_pairs(session, label: str, prop: str, threshold: int) -> list[tuple]:

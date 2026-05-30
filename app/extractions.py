@@ -7,6 +7,7 @@ call site, not here.
 import json
 from datetime import datetime
 
+from . import goals as goals_svc
 from .db import connect
 from .models import JournalParserResponse
 from .parser import is_health_meaningful, is_productivity_meaningful
@@ -65,13 +66,6 @@ def store_extractions(parsed: JournalParserResponse, day: str) -> None:
                 VALUES (?, ?, ?, ?)
             """, (day, t.task, t.due_date, datetime.now().isoformat()))
 
-        for goal_name in (parsed.discovered_goals or []):
-            if goal_name.strip():
-                cursor.execute(
-                    "INSERT OR IGNORE INTO goals (name, discovered_on) VALUES (?, ?)",
-                    (goal_name.strip(), day),
-                )
-
         for ev in parsed.events:
             for topic in (ev.topics or []):
                 if topic.strip():
@@ -85,3 +79,12 @@ def store_extractions(parsed: JournalParserResponse, day: str) -> None:
                         "INSERT INTO event_goal_contributions (day, event_title, goal_name) VALUES (?, ?, ?)",
                         (day, ev.title, goal_name.strip()),
                     )
+
+    # Route LLM-discovered goals through the lifecycle helper. Runs outside
+    # the SQLite context above so its own connect()/graph_connect() calls
+    # don't nest. Each call may invoke gpt-4o for semantic dedup; this is the
+    # nightly batch path so the cost is bounded.
+    for goal_name in (parsed.discovered_goals or []):
+        name = (goal_name or "").strip()
+        if name:
+            goals_svc.add_agent_goal(name, day)
