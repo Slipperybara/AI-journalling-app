@@ -73,15 +73,17 @@ def test_route_after_evaluator_max_retries_goes_to_synthesizer():
     assert _route_after_evaluator(state) == "synthesizer_node"
 
 
-def test_synthesizer_returns_apology_on_failed_query():
+def test_synthesizer_signals_failure_when_query_failed():
+    """Synthesizer no longer addresses the user directly. On failure it returns
+    a short internal signal that the bot wraps into a conversational apology."""
     from app.agents.synthesizer import synthesize_response
     result = synthesize_response(
         user_message="anything",
         graph_result=[],
-        sqlite_context="",
         failed=True,
     )
-    assert "couldn't" in result.lower() or "trouble" in result.lower()
+    lowered = result.lower()
+    assert "fail" in lowered or "no factual" in lowered or "no data" in lowered
 
 
 def test_db_executor_captures_neo4j_error():

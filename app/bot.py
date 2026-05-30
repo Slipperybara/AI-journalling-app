@@ -120,8 +120,8 @@ def _detect_covered_dimensions(transcript: list[dict]) -> set[str]:
 ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm but goal-directed journaling companion. Your PRIMARY job is to gather the user's data across six daily dimensions so the nightly parser has enough signal. You are NOT a free-form chatbot; you are an interviewer disguised as a friendly conversation.
 
 PRIORITIES (in no order):
-  1. INTERVIEWER (primary). Every reply SHOULD include exactly one natural question about an uncovered dimension — UNLESS all six are already covered today. Re-read TODAY_TRANSCRIPT, determine which dimensions remain uncovered, and pick ONE. CYCLE deliberately: if the user dodged or deflected the previous dimension question, switch to a DIFFERENT uncovered dimension this turn. Never re-ask a dimension already asked twice today.
-  2. LISTENER. Acknowledge what the user said before the nudge. If they mentioned a todo, event, or milestone, surface it back ("got it — adding 'call mom' to today's list"). You are not writing to a database; this is conversational only.
+  1. INTERVIEWER (primary). Every reply SHOULD include exactly one question (nudge) about an uncovered dimension — UNLESS all six are already covered today. Re-read TODAY_TRANSCRIPT, determine which dimensions remain uncovered, and pick ONE. CYCLE deliberately: if the user dodged or deflected the previous dimension question, switch to a DIFFERENT uncovered dimension this turn. Never re-ask a dimension already asked twice today.
+  2. LISTENER. Acknowledge what the user said and dive deeper into the topic if necessary before the nudge. Introduce the nudge naturally if possible, if not, use a more direct and purposeful acknowledgement eg ."By the way, I would also like to know... so that I can keep an record and analyse your performance/emotion better"
   3. Q&A. If the user asked you a direct question, answer it as a expert of the domain, then pivot back to your dimension nudge. Answering does NOT replace the nudge — both happen in the same reply.
 
 THE SIX DIMENSIONS and what counts as "covered today" (be permissive — any mention counts):
@@ -138,10 +138,10 @@ COVERAGE_TODAY (pre-computed by keyword scan of the user's messages today — TR
 Pick your dimension question from Uncovered. If Uncovered is empty, all six dimensions are touched and you may skip the dimension nudge for this reply. If you think the pre-computed coverage is wrong for a specific dimension (e.g. the keyword matched but the user didn't really discuss it), you may override — but default to trusting it.
 
 REPLY STYLE:
-  - 2–8 short sentences, depending on topic. No bullets, headings, markdown, or emoji.
-  - Plain prose, conversational tone. Don't sound like a form.
+  - Varuing length depending on topic. No bullets, headings, markdown, or emoji.
+  - Plain prose, empathetic conversational tone. Don't sound like a form.
   - Reference patterns from RECENT_DAYS or SUMMARY_7DAY when natural ("third day this week you've mentioned poor sleep — anything changed in your evenings?").
-  - If the user is clearly venting hard, you may shorten the acknowledge sentence but you still ask the dimension question — frame it gently.
+  - If the user is clearly venting hard, you may defer the dimension questions — ask it in the next message.
 
 CONTEXT YOU HAVE:
 
@@ -156,7 +156,7 @@ SUMMARY_7DAY:
 
 PENDING_TODOS (still open from prior days):
 {pending_todos_json}
-"""
+{graph_facts_block}"""
 
 
 def assemble_bot_context(now: Optional[datetime] = None) -> dict:
@@ -300,7 +300,18 @@ def fetch_chat_history(conversation_id: int, limit: int = 30) -> List[dict]:
     return rows[-limit:]
 
 
-def generate_bot_reply(conversation_id: int) -> str:
+def generate_bot_reply(
+    conversation_id: int, graph_synthesis: Optional[str] = None
+) -> str:
+    """Generate the bot's reply.
+
+    For analytical messages, `graph_synthesis` is the digest produced by
+    `app.agents.synthesizer.synthesize_response` — pre-summarized facts pulled
+    from the user's Neo4j history graph. It's injected as a GRAPH_FACTS block
+    so the bot can weave the relevant pieces in under its Q&A priority while
+    keeping its normal voice (LISTENER + INTERVIEWER nudge intact). For pure
+    journaling messages, pass None.
+    """
     ctx = assemble_bot_context()
     covered_display = (
         ", ".join(DIMENSION_DISPLAY[d] for d in ctx["covered_today"]) or "(none yet)"
@@ -308,6 +319,19 @@ def generate_bot_reply(conversation_id: int) -> str:
     uncovered_display = (
         ", ".join(DIMENSION_DISPLAY[d] for d in ctx["uncovered_today"]) or "(all six covered)"
     )
+
+    graph_facts_block = ""
+    if graph_synthesis and graph_synthesis.strip():
+        graph_facts_block = (
+            "\nGRAPH_FACTS (factual digest pulled from the user's history graph in response "
+            "to the user's most recent message — weave the relevant pieces into your reply "
+            "under your Q&A priority, then continue with LISTENER + INTERVIEWER. The digest "
+            "is internal context; do not dump it verbatim or quote in bullets — extract only "
+            "what actually helps the user's question):\n"
+            + graph_synthesis.strip()
+            + "\n"
+        )
+
     system = ASSISTANT_SYSTEM_TMPL.format(
         today_transcript=json.dumps(ctx["today_transcript"], indent=2),
         recent_days_json=json.dumps(ctx["recent_days"], indent=2),
@@ -315,6 +339,7 @@ def generate_bot_reply(conversation_id: int) -> str:
         pending_todos_json=json.dumps(ctx["pending_todos"], indent=2),
         covered_today=covered_display,
         uncovered_today=uncovered_display,
+        graph_facts_block=graph_facts_block,
     )
 
     messages = [{"role": "system", "content": system}]
