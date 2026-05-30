@@ -8,10 +8,11 @@ from .graph_db import graph_connect
 def run() -> dict:
     """Run all maintenance passes. Safe to call multiple times.
 
-    Goal reconciliation runs BEFORE goal Levenshtein dedup so the latter
-    operates on a graph that already matches the SQLite source of truth.
+    Reconciliation runs BEFORE Levenshtein dedup so the latter operates on
+    a graph that already matches the SQLite source of truth.
     """
-    reconcile = reconcile_goals()
+    days_reconciled = reconcile_extractions_and_chain()
+    goals_reconciled = reconcile_goals()
     events_merged = _deduplicate_events()
     topics_merged = _deduplicate_and_categorise_topics()
     goals_merged = _deduplicate_goals()
@@ -19,7 +20,89 @@ def run() -> dict:
         "events_merged": events_merged,
         "topics_merged": topics_merged,
         "goals_merged": goals_merged,
-        **reconcile,
+        **goals_reconciled,
+        **days_reconciled,
+    }
+
+
+def reconcile_extractions_and_chain() -> dict:
+    """Project SQLite per-day state into Neo4j and ensure the Day chain.
+
+    Pattern mirrors `reconcile_goals` but for the per-day extraction tables.
+    SQLite is the source of truth; this pass:
+      1. Finds the SQLite day range (earliest to latest with messages or
+         parse_log).
+      2. Ensures every calendar day in that range has a Day node and
+         consecutive NEXT_DAY edges — fixes gaps left by sparse batch runs.
+      3. Re-syncs every `succeeded` day so extraction state in Neo4j matches
+         SQLite, even if a prior `write_day` call partially failed.
+      4. Prunes Day nodes outside the SQLite range — clears stragglers from
+         old test runs or manual edits.
+
+    Idempotent. Cheap enough to run every nightly maintenance.
+    """
+    from . import graph_batch
+    from .db import connect
+
+    with connect() as conn:
+        sqlite_days = {
+            r["day"] for r in conn.execute("SELECT day FROM parse_log").fetchall()
+        }
+        msg_days = {
+            r["day"]
+            for r in conn.execute(
+                "SELECT DISTINCT date(m.created_at, '-6 hours') AS day "
+                "FROM messages m WHERE m.role = 'user'"
+            ).fetchall()
+        }
+        succeeded_days = {
+            r["day"]
+            for r in conn.execute(
+                "SELECT day FROM parse_log WHERE status = 'succeeded'"
+            ).fetchall()
+        }
+
+    all_known = sqlite_days | msg_days
+    if not all_known:
+        return {
+            "days_chain_nodes": 0,
+            "days_chain_edges": 0,
+            "days_synced": 0,
+            "days_orphaned_deleted": 0,
+        }
+
+    start_day = min(all_known)
+    end_day = max(all_known)
+
+    chain_result = graph_batch.ensure_day_chain(start_day, end_day)
+
+    synced = 0
+    for day in sorted(succeeded_days):
+        graph_batch.sync_day_to_graph(day)
+        synced += 1
+
+    # Prune any Day node outside [start, end] — catches stale test fixtures
+    # like 1999-01-01 and any drift from manual graph edits.
+    orphans_deleted = 0
+    with graph_connect() as session:
+        result = session.run(
+            "MATCH (d:Day) WHERE d.date < $start OR d.date > $end RETURN d.date AS date",
+            start=start_day,
+            end=end_day,
+        )
+        orphan_dates = [r["date"] for r in result]
+        for d in orphan_dates:
+            session.run(
+                "MATCH (d:Day {date: $date}) DETACH DELETE d", date=d
+            )
+            orphans_deleted += 1
+            print(f"[reconcile_days] pruned orphan Day: {d}")
+
+    return {
+        "days_chain_nodes": chain_result["nodes_ensured"],
+        "days_chain_edges": chain_result["edges_ensured"],
+        "days_synced": synced,
+        "days_orphaned_deleted": orphans_deleted,
     }
 
 

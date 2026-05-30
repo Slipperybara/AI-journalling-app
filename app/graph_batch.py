@@ -11,7 +11,9 @@ def _canonical_id(title: str) -> str:
 
 
 def write_day(day: str) -> dict:
-    """Write one day's extractions from SQLite into Neo4j. Idempotent."""
+    """Batch entrypoint: project one day's SQLite extractions into Neo4j and
+    ensure the chain links yesterday→day. Thin wrapper around the two
+    idempotent primitives that the reconciliation pass also reuses."""
     with connect() as conn:
         log_row = conn.execute(
             "SELECT status FROM parse_log WHERE day = ?", (day,)
@@ -20,6 +22,26 @@ def write_day(day: str) -> dict:
     if not log_row or log_row["status"] != "succeeded":
         return {"status": "skipped", "reason": "parse_log not succeeded", "day": day}
 
+    sync_result = sync_day_to_graph(day)
+    prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+    ensure_day_chain(prev, day)
+    return {"status": "ok", **sync_result}
+
+
+def sync_day_to_graph(day: str) -> dict:
+    """Idempotent projection of one day's SQLite state into Neo4j.
+
+    Reads emotion/health/productivity/events/event_topics/event_goal_contributions
+    plus the active+fulfilled goals list, then projects:
+      - Day node properties (productivity fields)
+      - EmotionState (delete-then-create in one tx)
+      - HealthState (delete-then-create in one tx)
+      - Event nodes + INVOLVES/CONTRIBUTES_TO edges
+
+    Does NOT touch the NEXT_DAY chain — that's `ensure_day_chain`'s job.
+    Safe to call repeatedly; each step uses MERGE / DETACH DELETE+CREATE
+    patterns that converge to the same state.
+    """
     with connect() as conn:
         emotion = conn.execute(
             "SELECT * FROM emotional_analysis WHERE day = ?", (day,)
@@ -54,7 +76,6 @@ def write_day(day: str) -> dict:
 
     with graph_connect() as session:
         _write_day_node(session, day, productivity)
-        _write_next_day_chain(session, day)
         _write_goals(session, goals)
         if emotion:
             _write_emotion(session, day, emotion)
@@ -63,7 +84,42 @@ def write_day(day: str) -> dict:
         for event in events:
             _write_event(session, day, event, topics_by_event, goals_by_event)
 
-    return {"status": "ok", "day": day, "events": len(events)}
+    return {"day": day, "events": len(events)}
+
+
+def ensure_day_chain(start_day: str, end_day: str) -> dict:
+    """Walk [start_day, end_day] inclusive. MERGE a Day node for every date
+    in the range and a NEXT_DAY edge between each consecutive pair.
+
+    Idempotent. Handles the case where the batch only ran on sparse days —
+    by walking the whole range, no calendar gaps remain in the chain.
+    """
+    start = date.fromisoformat(start_day)
+    end = date.fromisoformat(end_day)
+    if end < start:
+        return {"nodes_ensured": 0, "edges_ensured": 0}
+
+    days = []
+    cur = start
+    while cur <= end:
+        days.append(cur.isoformat())
+        cur += timedelta(days=1)
+
+    with graph_connect() as session:
+        for d in days:
+            session.run("MERGE (:Day {date: $date})", date=d)
+        for prev, nxt in zip(days, days[1:]):
+            session.run(
+                """
+                MATCH (a:Day {date: $a})
+                MATCH (b:Day {date: $b})
+                MERGE (a)-[:NEXT_DAY]->(b)
+                """,
+                a=prev,
+                b=nxt,
+            )
+
+    return {"nodes_ensured": len(days), "edges_ensured": max(0, len(days) - 1)}
 
 
 def _write_goals(session, goals) -> None:
@@ -100,15 +156,6 @@ def _write_day_node(session, day: str, productivity) -> None:
         cognitive_load=productivity["cognitive_load"] if productivity else None,
         friction_points=loads(productivity["friction_points"]) if productivity else [],
     )
-
-
-def _write_next_day_chain(session, day: str) -> None:
-    prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
-    session.run("""
-        MERGE (prev:Day {date: $prev})
-        MERGE (d:Day {date: $day})
-        MERGE (prev)-[:NEXT_DAY]->(d)
-    """, prev=prev, day=day)
 
 
 def _write_emotion(session, day: str, emotion) -> None:

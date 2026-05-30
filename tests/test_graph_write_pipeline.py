@@ -19,12 +19,67 @@ TEST_DAY = "1999-01-01"
 
 def test_write_day_creates_day_node():
     """write_day skips if parse_log has no succeeded row — but we can call helpers directly."""
-    from app.graph_batch import _write_day_node, _write_next_day_chain
+    from app.graph_batch import _write_day_node
     with graph_connect() as session:
         _clear_test_day(session, TEST_DAY)
         _write_day_node(session, TEST_DAY, None)
         result = session.run("MATCH (d:Day {date: $day}) RETURN d.date AS date", day=TEST_DAY).single()
     assert result["date"] == TEST_DAY
+
+
+def test_ensure_day_chain_fills_gaps():
+    """ensure_day_chain over a range MERGEs every Day node and creates
+    NEXT_DAY edges between consecutive days, regardless of whether any of
+    them had a prior write_day call."""
+    from app.graph_batch import ensure_day_chain
+
+    days = ["1999-02-01", "1999-02-02", "1999-02-03"]
+    with graph_connect() as s:
+        for d in days:
+            s.run("MATCH (d:Day {date: $d}) DETACH DELETE d", d=d)
+
+    result = ensure_day_chain("1999-02-01", "1999-02-03")
+    assert result["nodes_ensured"] == 3
+    assert result["edges_ensured"] == 2
+
+    with graph_connect() as s:
+        nodes = [r["date"] for r in s.run(
+            "MATCH (d:Day) WHERE d.date IN $days RETURN d.date AS date ORDER BY d.date",
+            days=days,
+        )]
+        edges = [(r["a"], r["b"]) for r in s.run(
+            "MATCH (a:Day)-[:NEXT_DAY]->(b:Day) WHERE a.date IN $days "
+            "RETURN a.date AS a, b.date AS b ORDER BY a.date",
+            days=days,
+        )]
+        for d in days:
+            s.run("MATCH (d:Day {date: $d}) DETACH DELETE d", d=d)
+
+    assert nodes == days
+    assert edges == [("1999-02-01", "1999-02-02"), ("1999-02-02", "1999-02-03")]
+
+
+def test_ensure_day_chain_idempotent():
+    """Re-running ensure_day_chain on the same range produces no duplicates."""
+    from app.graph_batch import ensure_day_chain
+
+    days = ["1999-03-01", "1999-03-02"]
+    with graph_connect() as s:
+        for d in days:
+            s.run("MATCH (d:Day {date: $d}) DETACH DELETE d", d=d)
+
+    ensure_day_chain("1999-03-01", "1999-03-02")
+    ensure_day_chain("1999-03-01", "1999-03-02")
+
+    with graph_connect() as s:
+        edge_count = s.run(
+            "MATCH (a:Day {date: '1999-03-01'})-[r:NEXT_DAY]->(b:Day {date: '1999-03-02'}) "
+            "RETURN count(r) AS n"
+        ).single()["n"]
+        for d in days:
+            s.run("MATCH (d:Day {date: $d}) DETACH DELETE d", d=d)
+
+    assert edge_count == 1
 
 
 def test_write_emotion_creates_in_quadrant_edge():
