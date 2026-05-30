@@ -5,8 +5,14 @@ Analytical path: router -> cypher_agent -> db_executor -> (self-correct loop)
 -> evaluator -> (re-query loop) -> synthesizer. The synthesizer digests the
 Neo4j records into a factual summary, then hands off to generate_bot_reply
 so the user-facing reply keeps the bot's voice.
+
+The cypher_agent + evaluator loop is ReAct-style: each iteration records an
+attempt {query, result_count, result_sample, eval_passed, eval_hint} into
+`search_history`, which the cypher_agent reads on its next pass so it can
+choose to broaden, pivot, refine, or deepen based on what it already tried.
 """
-from typing import Any, TypedDict
+from operator import add
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
@@ -21,14 +27,18 @@ class GraphState(TypedDict):
     message: str
     conversation_id: int
     intent: str               # "journaling" | "analytical"
-    sqlite_context: str       # today's transcript + open todos
+    sqlite_context: str       # synthesizer facts (legacy field name kept)
     cypher_query: str
     graph_result: Any         # list of dicts from Neo4j
     query_error: str          # empty string when no error
-    retry_count: int          # Cypher self-correction attempts
-    eval_retry_count: int     # evaluation broadening attempts
+    retry_count: int          # Cypher self-correction attempts (syntax)
+    eval_retry_count: int     # evaluation broadening attempts (semantic)
     eval_passed: bool
     eval_hint: str
+    # Append-reducer: each evaluator pass appends one entry of
+    # {query, result_count, result_sample, eval_passed, eval_hint}.
+    # The cypher_agent reads this on every iteration to decide its next move.
+    search_history: Annotated[list, add]
     final_response: str
 
 
@@ -64,8 +74,10 @@ def _bot_node(state: GraphState) -> dict:
 
 
 def _cypher_agent_node(state: GraphState) -> dict:
-    hint = state.get("eval_hint", "") if state.get("eval_retry_count", 0) > 0 else ""
-    cypher = generate_cypher(state["message"], eval_hint=hint)
+    cypher = generate_cypher(
+        state["message"],
+        search_history=state.get("search_history", []),
+    )
     return {"cypher_query": cypher, "query_error": ""}
 
 
@@ -90,10 +102,21 @@ def _self_correct_node(state: GraphState) -> dict:
 
 def _evaluator_node(state: GraphState) -> dict:
     verdict = evaluate_result(state["message"], state.get("graph_result", []))
+    eval_passed = verdict.get("satisfied", True)
+    eval_hint = verdict.get("hint", "")
+    graph_result = state.get("graph_result", []) or []
+    attempt = {
+        "query": state.get("cypher_query", ""),
+        "result_count": len(graph_result),
+        "result_sample": graph_result[:3],
+        "eval_passed": eval_passed,
+        "eval_hint": eval_hint,
+    }
     return {
-        "eval_passed": verdict.get("satisfied", True),
-        "eval_hint": verdict.get("hint", ""),
+        "eval_passed": eval_passed,
+        "eval_hint": eval_hint,
         "eval_retry_count": state.get("eval_retry_count", 0) + 1,
+        "search_history": [attempt],
     }
 
 
@@ -128,7 +151,10 @@ def _route_after_executor(state: GraphState) -> str:
 def _route_after_evaluator(state: GraphState) -> str:
     if state.get("eval_passed", True):
         return "synthesizer_node"
-    if state.get("eval_retry_count", 0) < 2:
+    # Allow up to 3 broadening attempts after the initial evaluation,
+    # so the cypher_agent can try 4 distinct queries in total before falling
+    # through to the synthesizer with whatever data it has.
+    if state.get("eval_retry_count", 0) < 3:
         return "cypher_agent_node"
     return "synthesizer_node"
 
@@ -179,6 +205,7 @@ def process_message(conversation_id: int, message_content: str) -> None:
         "eval_retry_count": 0,
         "eval_passed": False,
         "eval_hint": "",
+        "search_history": [],
         "final_response": "",
     }
     _graph.invoke(initial_state)

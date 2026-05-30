@@ -69,8 +69,30 @@ def test_route_after_evaluator_not_satisfied_retries_cypher():
 
 def test_route_after_evaluator_max_retries_goes_to_synthesizer():
     from app.langgraph_flow import _route_after_evaluator
-    state = {"eval_passed": False, "eval_retry_count": 2}
+    # Cap is now 3 broadening attempts: after 3 evaluator runs, fall through.
+    state = {"eval_passed": False, "eval_retry_count": 3}
     assert _route_after_evaluator(state) == "synthesizer_node"
+
+
+def test_evaluator_appends_attempt_to_search_history():
+    from unittest.mock import patch
+    from app.langgraph_flow import _evaluator_node
+    with patch("app.langgraph_flow.evaluate_result", return_value={"satisfied": False, "hint": "broaden range"}):
+        update = _evaluator_node({
+            "message": "what drove my peak performance days?",
+            "cypher_query": "MATCH (d:Day) RETURN d LIMIT 5",
+            "graph_result": [{"d": "2026-05-27"}, {"d": "2026-05-29"}],
+            "eval_retry_count": 0,
+        })
+    assert update["eval_passed"] is False
+    assert update["eval_hint"] == "broaden range"
+    assert update["eval_retry_count"] == 1
+    assert isinstance(update["search_history"], list) and len(update["search_history"]) == 1
+    attempt = update["search_history"][0]
+    assert attempt["query"] == "MATCH (d:Day) RETURN d LIMIT 5"
+    assert attempt["result_count"] == 2
+    assert attempt["eval_passed"] is False
+    assert attempt["eval_hint"] == "broaden range"
 
 
 def test_synthesizer_signals_failure_when_query_failed():

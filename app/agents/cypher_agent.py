@@ -1,38 +1,79 @@
-"""Heavy DB agent: Cypher generation, self-correction, and result evaluation."""
+"""Heavy DB agent: Cypher generation, self-correction, and result evaluation.
+
+Generation is ReAct-style: each iteration receives the full search history
+(prior queries + their result samples + the evaluator's verdicts and hints)
+and decides its next move — broaden, pivot, refine, or deepen — instead of
+writing each query in isolation.
+"""
 import json
 
 from ..core import client
 from ..graph_schema import ONTOLOGY_SCHEMA
 
 
-def generate_cypher(user_message: str, eval_hint: str = "") -> str:
-    """Generate a Cypher query for the user's analytical question."""
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a Neo4j Cypher expert. Generate a single Cypher query to answer "
-                "the user's question about their personal journal history. "
-                "Use ONLY the labels and relationship types defined in the schema below. "
-                "Prefer MATCH patterns over raw property filters where possible. "
-                "Return ONLY the raw Cypher query — no explanation, no markdown fences.\n\n"
-                + ONTOLOGY_SCHEMA
-            ),
-        },
-        {"role": "user", "content": user_message},
-    ]
-    if eval_hint:
-        messages.append({
-            "role": "user",
-            "content": f"Previous query was incomplete. Broaden it: {eval_hint}",
-        })
+def generate_cypher(
+    user_message: str, search_history: list[dict] | None = None
+) -> str:
+    """Generate the next Cypher query in an exploration loop.
+
+    `search_history` is a chronological list of prior attempts; each entry:
+        {query, result_count, result_sample, eval_passed, eval_hint}
+    On the first iteration the list is empty.
+    """
+    history_block = _format_search_history(search_history or [])
+    user_block = (
+        f"User question: {user_message}\n\n"
+        f"{history_block}\n\n"
+        "Write the next Cypher query."
+    )
 
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=messages,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are exploring the user's personal journal history graph in Neo4j to "
+                    "answer their question. You may have made previous attempts — review them "
+                    "and decide your next move.\n\n"
+                    "Possible moves:\n"
+                    "  - BROADEN a query if the previous returned too few or empty results.\n"
+                    "  - PIVOT to a different angle if results were off-target.\n"
+                    "  - REFINE if you're on the right track but need different fields, "
+                    "grouping, or ordering.\n"
+                    "  - DEEPEN by joining additional labels for richer context.\n\n"
+                    "Use ONLY the labels and relationship types defined in the schema below. "
+                    "Prefer MATCH patterns over raw property filters. Return ONLY the raw "
+                    "Cypher query — no explanation, no markdown fences, no commentary.\n\n"
+                    + ONTOLOGY_SCHEMA
+                ),
+            },
+            {"role": "user", "content": user_block},
+        ],
         temperature=0,
     )
     return response.choices[0].message.content.strip()
+
+
+def _format_search_history(history: list[dict]) -> str:
+    if not history:
+        return "Previous attempts: (none yet — this is your first attempt)"
+    lines = ["Previous attempts (oldest first):"]
+    for i, h in enumerate(history, 1):
+        verdict = "SATISFIED" if h.get("eval_passed") else "NOT SATISFIED"
+        hint = (h.get("eval_hint") or "").strip() or "(no hint)"
+        sample = h.get("result_sample") or []
+        sample_str = (
+            json.dumps(sample[:3], indent=2, default=str) if sample else "(empty)"
+        )
+        lines.append(
+            f"\nAttempt {i}:\n"
+            f"  Query: {(h.get('query') or '').strip()}\n"
+            f"  Records returned: {h.get('result_count', 0)}\n"
+            f"  Sample (up to 3): {sample_str}\n"
+            f"  Evaluator: {verdict} — {hint}"
+        )
+    return "\n".join(lines)
 
 
 def correct_cypher(query: str, error: str) -> str:
