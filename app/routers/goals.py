@@ -23,6 +23,10 @@ class GoalCreate(BaseModel):
     name: str
 
 
+class GoalRename(BaseModel):
+    new_name: str
+
+
 @router.get("")
 async def list_goals_endpoint(status: str | None = Query(default=None)):
     if status is not None and status not in VALID_STATUSES:
@@ -43,6 +47,11 @@ async def create_goal(body: GoalCreate):
         raise HTTPException(
             status_code=409, detail=f"goal '{body.name}' already exists"
         )
+    except GoalCapReachedError:
+        raise HTTPException(
+            status_code=409,
+            detail="3 active goals already; fulfill or remove one first",
+        )
 
 
 @router.patch("/{name}/fulfill")
@@ -52,22 +61,24 @@ async def fulfill_goal(name: str):
     except GoalNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail=f"no active or candidate goal named '{name}'",
+            detail=f"no active goal named '{name}'",
         )
 
 
-@router.patch("/{name}/promote")
-async def promote_goal(name: str):
+@router.patch("/{name}/rename")
+async def rename_goal_endpoint(name: str, body: GoalRename):
     try:
-        return goals_svc.promote_candidate(name)
+        return goals_svc.rename_goal(name, body.new_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except GoalNotFoundError:
         raise HTTPException(
-            status_code=404, detail=f"no candidate goal named '{name}'"
+            status_code=404, detail=f"no active/fulfilled goal named '{name}'"
         )
-    except GoalCapReachedError:
+    except GoalExistsError:
         raise HTTPException(
             status_code=409,
-            detail="3 active goals already; fulfill or remove one first",
+            detail=f"a goal named '{body.new_name}' already exists",
         )
 
 

@@ -20,6 +20,10 @@ def _cleanup():
         conn.execute(
             "DELETE FROM goals WHERE name LIKE ?", (TEST_PREFIX + "%",)
         )
+        conn.execute(
+            "DELETE FROM event_goal_contributions WHERE goal_name LIKE ?",
+            (TEST_PREFIX + "%",),
+        )
     with graph_connect() as s:
         s.run(
             "MATCH (g:Goal) WHERE g.name STARTS WITH $p DETACH DELETE g",
@@ -51,12 +55,11 @@ def test_add_user_goal_active_under_cap():
     assert _graph_status(f"{TEST_PREFIX}solo") == "active"
 
 
-def test_add_user_goal_candidate_at_cap():
+def test_add_user_goal_409_at_cap():
     for i in range(3):
         goals_svc.add_user_goal(f"{TEST_PREFIX}fill{i}")
-    overflow = goals_svc.add_user_goal(f"{TEST_PREFIX}overflow")
-    assert overflow["status"] == "candidate"
-    assert _graph_status(f"{TEST_PREFIX}overflow") is None
+    with pytest.raises(goals_svc.GoalCapReachedError):
+        goals_svc.add_user_goal(f"{TEST_PREFIX}overflow")
 
 
 def test_add_user_goal_409_on_duplicate_active_name():
@@ -65,58 +68,23 @@ def test_add_user_goal_409_on_duplicate_active_name():
         goals_svc.add_user_goal(f"{TEST_PREFIX}dupe")
 
 
-def test_add_user_goal_resurrects_removed_at_cap_as_candidate():
+def test_resurrects_removed_under_cap():
+    name = f"{TEST_PREFIX}revived"
+    goals_svc.add_user_goal(name)
+    goals_svc.mark_removed(name)
+    revived = goals_svc.add_user_goal(name)
+    assert revived["status"] == "active"
+    assert revived["removed_at"] is None
+
+
+def test_resurrect_at_cap_raises():
     name = f"{TEST_PREFIX}revived"
     goals_svc.add_user_goal(name)
     goals_svc.mark_removed(name)
     for i in range(3):
         goals_svc.add_user_goal(f"{TEST_PREFIX}block{i}")
-    revived = goals_svc.add_user_goal(name)
-    assert revived["status"] == "candidate"
-    assert revived["removed_at"] is None
-    assert _graph_status(name) is None
-
-
-def test_agent_goal_semantic_dedup_returns_existing():
-    canonical = f"{TEST_PREFIX}canonical"
-    goals_svc.add_user_goal(canonical)
-    with patch(
-        "app.goals._semantic_dedup_against_existing", return_value=canonical
-    ):
-        result = goals_svc.add_agent_goal(
-            f"{TEST_PREFIX}variant_phrase", day="2026-01-01"
-        )
-    assert result["name"] == canonical
-    with connect() as conn:
-        all_test_rows = conn.execute(
-            "SELECT name FROM goals WHERE name LIKE ?", (TEST_PREFIX + "%",)
-        ).fetchall()
-    assert {r["name"] for r in all_test_rows} == {canonical}
-
-
-def test_agent_goal_inserts_when_no_match():
-    with patch("app.goals._semantic_dedup_against_existing", return_value=None):
-        result = goals_svc.add_agent_goal(
-            f"{TEST_PREFIX}novel", day="2026-01-01"
-        )
-    assert result["name"] == f"{TEST_PREFIX}novel"
-    assert result["status"] == "active"
-    assert result["source"] == "agent"
-
-
-def test_mark_fulfilled_does_not_auto_promote():
-    for i in range(3):
-        goals_svc.add_user_goal(f"{TEST_PREFIX}active{i}")
-    candidate_name = f"{TEST_PREFIX}queued"
-    goals_svc.add_user_goal(candidate_name)
-    goals_svc.mark_fulfilled(f"{TEST_PREFIX}active0")
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT status FROM goals WHERE name = ?", (candidate_name,)
-        ).fetchone()
-        active_count = goals_svc._count_active(conn.cursor())
-    assert row["status"] == "candidate"
-    assert active_count == 2
+    with pytest.raises(goals_svc.GoalCapReachedError):
+        goals_svc.add_user_goal(name)
 
 
 def test_mark_removed_hard_deletes_from_graph():
@@ -131,15 +99,6 @@ def test_mark_removed_hard_deletes_from_graph():
         ).fetchone()
     assert row["status"] == "removed"
     assert row["removed_at"] is not None
-
-
-def test_promote_candidate_409_at_cap():
-    for i in range(3):
-        goals_svc.add_user_goal(f"{TEST_PREFIX}cap{i}")
-    candidate_name = f"{TEST_PREFIX}wantactive"
-    goals_svc.add_user_goal(candidate_name)
-    with pytest.raises(goals_svc.GoalCapReachedError):
-        goals_svc.promote_candidate(candidate_name)
 
 
 def test_sync_goal_to_graph_idempotent_status_change():
@@ -191,3 +150,46 @@ def test_parser_addendum_excludes_fulfilled():
 
     assert active_name in captured["system"]
     assert fulfilled_name not in captured["system"]
+
+
+def test_rename_goal_updates_sqlite_and_graph():
+    old = f"{TEST_PREFIX}old_name"
+    new = f"{TEST_PREFIX}new_name"
+    goals_svc.add_user_goal(old)
+    # Seed an event_goal_contributions row referencing the old name to
+    # confirm the cascade.
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO event_goal_contributions (day, event_title, goal_name) "
+            "VALUES ('2026-01-01', 'Some Event', ?)",
+            (old,),
+        )
+
+    result = goals_svc.rename_goal(old, new)
+    assert result["name"] == new
+    assert _graph_status(new) == "active"
+    assert _graph_status(old) is None
+
+    with connect() as conn:
+        old_row = conn.execute(
+            "SELECT name FROM goals WHERE name = ?", (old,)
+        ).fetchone()
+        cascade = conn.execute(
+            "SELECT goal_name FROM event_goal_contributions WHERE event_title = 'Some Event'"
+        ).fetchone()
+    assert old_row is None
+    assert cascade["goal_name"] == new
+
+
+def test_rename_goal_to_existing_name_raises():
+    a = f"{TEST_PREFIX}a"
+    b = f"{TEST_PREFIX}b"
+    goals_svc.add_user_goal(a)
+    goals_svc.add_user_goal(b)
+    with pytest.raises(goals_svc.GoalExistsError):
+        goals_svc.rename_goal(a, b)
+
+
+def test_rename_unknown_goal_raises():
+    with pytest.raises(goals_svc.GoalNotFoundError):
+        goals_svc.rename_goal(f"{TEST_PREFIX}does_not_exist", f"{TEST_PREFIX}new")

@@ -118,11 +118,6 @@ def _gather_context(day: str) -> dict:
             (seven_back, day),
         ).fetchall()
 
-        pending_todos = conn.execute(
-            "SELECT task_description, due_date, day, source_day FROM todos "
-            "WHERE is_completed = 0 ORDER BY id ASC LIMIT 5"
-        ).fetchall()
-
     active_goals = [g["name"] for g in goals_svc.list_goals(status="active")]
     goal_momentum = _fetch_goal_momentum(active_goals) if active_goals else {}
 
@@ -132,7 +127,6 @@ def _gather_context(day: str) -> dict:
         yest_data_present
         or seven_data_present
         or active_goals
-        or pending_todos
     )
 
     return {
@@ -147,7 +141,6 @@ def _gather_context(day: str) -> dict:
         "seven_day_productivity": [dict(r) for r in seven_productivity],
         "active_goals": active_goals,
         "goal_momentum": goal_momentum,
-        "pending_todos": [dict(r) for r in pending_todos],
         "parse_log_status": parse_log["status"] if parse_log else None,
         "is_sparse_yesterday": not yest_data_present,
         "is_brand_new_user": not has_any_data,
@@ -244,7 +237,6 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
             {"name": name, "events_last_7d": context["goal_momentum"].get(name, 0)}
             for name in context["active_goals"]
         ],
-        "pending_todos": context["pending_todos"],
     }
 
     response = client.chat.completions.create(
@@ -261,8 +253,7 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
                     "data. If is_sparse_yesterday=true, say so kindly and skip to step 5.\n"
                     "3. If seven_day_pattern is non-empty, mention it in one sentence.\n"
                     "4. If active_goals show momentum or stalled status worth noting, "
-                    "mention ONE lightly. If pending_todos has items overdue or "
-                    "carried over from prior days, surface ONE if it fits naturally.\n"
+                    "mention ONE lightly.\n"
                     "5. Offer ONE concrete, specific suggestion for today, grounded "
                     "in the data — not generic advice. Skip this step if the data is "
                     "too sparse to justify it.\n"

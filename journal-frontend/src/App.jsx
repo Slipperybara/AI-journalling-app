@@ -46,15 +46,6 @@ const bucketKey = (t) => {
   return `${y}-${m}-${day}`;
 };
 
-const isoAddDays = (iso, n) => {
-  const d = new Date(`${iso}T12:00:00`);
-  d.setDate(d.getDate() + n);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-};
-
 const conversationPreview = (c) => {
   if (c.first_user_message) {
     const s = c.first_user_message.trim().replace(/\s+/g, ' ');
@@ -80,7 +71,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
-  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], todos: {} });
+  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
 
@@ -146,11 +137,89 @@ export default function App() {
   // Cleanup polling on unmount / conv change
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+  const tryGoalCommand = async (text) => {
+    const match = text.match(/^\/goal\s+(\w+)\s*(.*)$/i);
+    if (!match) return null;
+    const verb = match[1].toLowerCase();
+    const rest = (match[2] || '').trim();
+    const errOf = async (res, fallback) => {
+      const e = await res.json().catch(() => ({}));
+      return e.detail || fallback;
+    };
+    try {
+      if (verb === 'add') {
+        const res = await fetch(`${API}/api/goals`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: rest }),
+        });
+        return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to add goal') };
+      }
+      if (verb === 'fulfill') {
+        const res = await fetch(`${API}/api/goals/${encodeURIComponent(rest)}/fulfill`, { method: 'PATCH' });
+        return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to fulfill goal') };
+      }
+      if (verb === 'remove') {
+        const res = await fetch(`${API}/api/goals/${encodeURIComponent(rest)}`, { method: 'DELETE' });
+        return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to remove goal') };
+      }
+      if (verb === 'rename') {
+        const parts = rest.match(/^"([^"]+)"\s+"([^"]+)"$/);
+        if (!parts) return { ok: false, message: 'usage: /goal rename "Old Name" "New Name"' };
+        const [, oldName, newName] = parts;
+        const res = await fetch(`${API}/api/goals/${encodeURIComponent(oldName)}/rename`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_name: newName }),
+        });
+        return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to rename goal') };
+      }
+      if (verb === 'list') {
+        const res = await fetch(`${API}/api/goals?status=active`);
+        if (!res.ok) return { ok: false, message: 'failed to list goals' };
+        const rows = await res.json();
+        const names = rows.map(r => r.name);
+        return { ok: true, listMessage: names.length ? `Active goals: ${names.join(', ')}` : 'No active goals.' };
+      }
+      return { ok: false, message: `unknown command /goal ${verb}` };
+    } catch {
+      return { ok: false, message: 'command failed' };
+    }
+  };
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || !activeConvId || isWaiting) return;
 
     setInput('');
+
+    // Slash-command interception: dispatch to the goals API before posting
+    // through the bot. Mutations refresh the dashboard so the GoalsStrip
+    // updates. /goal list short-circuits — it doesn't go through the bot.
+    const goalResult = await tryGoalCommand(text);
+    if (goalResult) {
+      if (goalResult.ok) {
+        fetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
+      }
+      if (goalResult.listMessage) {
+        setMessages(prev => [
+          ...prev,
+          { id: `local-${Date.now()}`, role: 'assistant', content: goalResult.listMessage, created_at: new Date().toISOString() },
+        ]);
+        return;
+      }
+      if (!goalResult.ok) {
+        setMessages(prev => [
+          ...prev,
+          { id: `local-${Date.now()}`, role: 'assistant', content: `(${goalResult.message})`, created_at: new Date().toISOString() },
+        ]);
+        // Mutation failed — don't run the bot. User saw the error inline.
+        return;
+      }
+      // Mutation succeeded — fall through, post the user message so the bot
+      // can acknowledge naturally.
+    }
+
     setIsWaiting(true);
 
     // Optimistic user message
@@ -400,399 +469,41 @@ function TypingDots() {
 }
 
 function DashboardView({ data }) {
-  const { emotional, health, productivity, events, todos: initialTodos, goals: initialGoals } = data;
+  const { emotional, health, productivity, events, goals: initialGoals } = data;
   return (
     <div className="flex-1 overflow-y-auto px-8 py-7 space-y-8">
       <div className="max-w-5xl mx-auto space-y-8">
-        <GoalsPanel initialGoals={initialGoals} />
-        <TodoPanel initialTodos={initialTodos} />
+        <GoalsStrip initialGoals={initialGoals} />
         <WeeklySummary emotional={emotional} health={health} productivity={productivity} events={events} />
       </div>
     </div>
   );
 }
 
-function GoalsPanel({ initialGoals }) {
-  const empty = { active: [], fulfilled: [], candidate: [] };
-  const [goalsByStatus, setGoalsByStatus] = useState({ ...empty, ...(initialGoals || {}) });
-  const [addInput, setAddInput] = useState('');
-  const [hoveredName, setHoveredName] = useState(null);
+function GoalsStrip({ initialGoals }) {
+  const empty = { active: [], fulfilled: [] };
+  const [goals] = useState({ ...empty, ...(initialGoals || {}) });
 
-  const activeCount = goalsByStatus.active.length;
-  const isCapFull = activeCount >= 3;
-  const totalCount = activeCount + goalsByStatus.candidate.length + goalsByStatus.fulfilled.length;
-
-  const dropByName = (state, name) => ({
-    active: state.active.filter(g => g.name !== name),
-    candidate: state.candidate.filter(g => g.name !== name),
-    fulfilled: state.fulfilled.filter(g => g.name !== name),
-  });
-
-  const handleFulfill = async (goal) => {
-    const snapshot = goalsByStatus;
-    setGoalsByStatus(prev => {
-      const cleaned = dropByName(prev, goal.name);
-      cleaned.fulfilled = [{ ...goal, status: 'fulfilled', fulfilled_at: new Date().toISOString() }, ...cleaned.fulfilled];
-      return cleaned;
-    });
-    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}/fulfill`, { method: 'PATCH' });
-    if (!res.ok) {
-      setGoalsByStatus(snapshot);
-      return;
-    }
-    const updated = await res.json();
-    setGoalsByStatus(prev => {
-      const cleaned = dropByName(prev, updated.name);
-      cleaned[updated.status] = [updated, ...cleaned[updated.status]];
-      return cleaned;
-    });
-  };
-
-  const handlePromote = async (goal) => {
-    if (isCapFull) return;
-    const snapshot = goalsByStatus;
-    setGoalsByStatus(prev => {
-      const cleaned = dropByName(prev, goal.name);
-      cleaned.active = [{ ...goal, status: 'active' }, ...cleaned.active];
-      return cleaned;
-    });
-    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}/promote`, { method: 'PATCH' });
-    if (!res.ok) {
-      setGoalsByStatus(snapshot);
-      return;
-    }
-    const updated = await res.json();
-    setGoalsByStatus(prev => {
-      const cleaned = dropByName(prev, updated.name);
-      cleaned[updated.status] = [updated, ...cleaned[updated.status]];
-      return cleaned;
-    });
-  };
-
-  const handleRemove = async (goal) => {
-    const snapshot = goalsByStatus;
-    setGoalsByStatus(prev => dropByName(prev, goal.name));
-    const res = await fetch(`${API}/api/goals/${encodeURIComponent(goal.name)}`, { method: 'DELETE' });
-    if (!res.ok) setGoalsByStatus(snapshot);
-  };
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    const text = addInput.trim();
-    if (!text) return;
-    setAddInput('');
-    const res = await fetch(`${API}/api/goals`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: text }),
-    });
-    if (!res.ok) return;
-    const created = await res.json();
-    setGoalsByStatus(prev => {
-      const cleaned = dropByName(prev, created.name);
-      cleaned[created.status] = [created, ...cleaned[created.status]];
-      return cleaned;
-    });
-  };
+  if (!goals.active || goals.active.length === 0) return null;
 
   return (
-    <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900">Goals</h2>
-        <span className={`text-xs ${isCapFull ? 'text-amber-600' : 'text-slate-400'}`}>
-          {activeCount} of 3 active
-        </span>
-      </div>
-
-      <div className="space-y-1 min-h-[60px]">
-        {totalCount === 0 && (
-          <p className="text-xs text-slate-400 py-3 text-center">No goals yet. Add one below to start tracking.</p>
-        )}
-
-        {goalsByStatus.active.map(goal => (
-          <GoalRow
-            key={goal.name}
-            goal={goal}
-            accent="emerald"
-            hoveredName={hoveredName}
-            setHoveredName={setHoveredName}
-            actions={
-              <>
-                <button onClick={() => handleFulfill(goal)} className="text-xs text-emerald-600 hover:text-emerald-700">✓ Fulfill</button>
-                <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
-              </>
-            }
-          />
-        ))}
-
-        {goalsByStatus.candidate.length > 0 && (
-          <>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400 pt-2 pl-2">Queued (not tracked in graph)</div>
-            {goalsByStatus.candidate.map(goal => (
-              <GoalRow
-                key={goal.name}
-                goal={goal}
-                accent="amber"
-                hoveredName={hoveredName}
-                setHoveredName={setHoveredName}
-                actions={
-                  <>
-                    <button
-                      onClick={() => handlePromote(goal)}
-                      disabled={isCapFull}
-                      title={isCapFull ? '3 active already; fulfill or remove one first' : undefined}
-                      className="text-xs text-amber-600 hover:text-amber-700 disabled:text-slate-300 disabled:cursor-not-allowed"
-                    >↑ Promote</button>
-                    <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
-                  </>
-                }
-              />
-            ))}
-          </>
-        )}
-
-        {goalsByStatus.fulfilled.length > 0 && (
-          <>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400 pt-2 pl-2">Fulfilled</div>
-            {goalsByStatus.fulfilled.map(goal => (
-              <GoalRow
-                key={goal.name}
-                goal={goal}
-                accent="slate"
-                strike
-                hoveredName={hoveredName}
-                setHoveredName={setHoveredName}
-                actions={
-                  <button onClick={() => handleRemove(goal)} className="text-slate-300 hover:text-rose-500 text-sm">×</button>
-                }
-              />
-            ))}
-          </>
-        )}
-      </div>
-
-      <form onSubmit={handleAdd} className="flex items-center gap-2 border-t border-slate-100 pt-3">
-        <input
-          type="text"
-          value={addInput}
-          onChange={e => setAddInput(e.target.value)}
-          placeholder="+ Add a goal…"
-          className="flex-1 text-sm text-slate-700 placeholder-slate-400 bg-transparent outline-none"
-        />
-        {isCapFull && addInput.trim() && (
-          <span className="text-[10px] text-amber-600">Will queue as candidate</span>
-        )}
-        <button
-          type="submit"
-          disabled={!addInput.trim()}
-          className="text-xs px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-200 text-white rounded-md transition-colors"
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-slate-400 uppercase tracking-wider mr-1">Goals</span>
+      {goals.active.map(g => (
+        <span
+          key={g.name}
+          className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+          title={g.source === 'agent' ? 'discovered from chat' : 'added by you'}
         >
-          Add
-        </button>
-      </form>
-    </section>
-  );
-}
-
-function GoalRow({ goal, accent, strike, hoveredName, setHoveredName, actions }) {
-  const isHovered = hoveredName === goal.name;
-  const dotColors = { emerald: 'bg-emerald-500', amber: 'bg-amber-500', slate: 'bg-slate-300' };
-  return (
-    <div
-      className="flex items-start gap-3 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors group"
-      onMouseEnter={() => setHoveredName(goal.name)}
-      onMouseLeave={() => setHoveredName(null)}
-    >
-      <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotColors[accent]}`} />
-      <div className="flex-1 min-w-0">
-        <p className={`text-sm ${strike ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-          {goal.name}
-        </p>
-        <div className="flex gap-3 mt-0.5">
-          {goal.fulfilled_at && (
-            <span className="text-[10px] text-slate-400">
-              fulfilled {new Date(goal.fulfilled_at).toLocaleDateString()}
-            </span>
-          )}
-          {goal.source === 'agent' && (
-            <span className="text-[10px] text-slate-400">discovered by bot</span>
-          )}
-        </div>
-      </div>
-      {isHovered && (
-        <div className="flex items-center gap-3 flex-shrink-0">{actions}</div>
-      )}
+          {g.name}
+        </span>
+      ))}
+      <span className="ml-auto text-slate-400">{goals.active.length} of 3 active</span>
     </div>
   );
 }
 
-function TodoPanel({ initialTodos }) {
-  const todayBucket = bucketKey(new Date());
-  const [selectedDay, setSelectedDay] = useState(todayBucket);
-  const [todosByDay, setTodosByDay] = useState(initialTodos || {});
-  const [addInput, setAddInput] = useState('');
-  const [hoveredId, setHoveredId] = useState(null);
 
-  useEffect(() => {
-    if (todosByDay[selectedDay] !== undefined) return;
-    (async () => {
-      const res = await fetch(`${API}/api/todos/${selectedDay}`);
-      if (!res.ok) return;
-      const rows = await res.json();
-      setTodosByDay(prev => ({ ...prev, [selectedDay]: rows }));
-    })();
-  }, [selectedDay, todosByDay]);
-
-  const todosForDay = todosByDay[selectedDay] ?? [];
-  const doneCount = todosForDay.filter(t => t.is_completed).length;
-
-  const navigate = (delta) => setSelectedDay(prev => isoAddDays(prev, delta));
-
-  const toggle = async (todo) => {
-    const endpoint = todo.is_completed ? 'uncomplete' : 'complete';
-    const optimistic = { ...todo, is_completed: todo.is_completed ? 0 : 1, fulfilled_at: todo.is_completed ? null : new Date().toISOString() };
-    setTodosByDay(prev => ({
-      ...prev,
-      [selectedDay]: prev[selectedDay].map(t => t.id === todo.id ? optimistic : t),
-    }));
-    const res = await fetch(`${API}/api/todos/${todo.id}/${endpoint}`, { method: 'PATCH' });
-    if (!res.ok) {
-      setTodosByDay(prev => ({
-        ...prev,
-        [selectedDay]: prev[selectedDay].map(t => t.id === todo.id ? todo : t),
-      }));
-    }
-  };
-
-  const deleteTodo = async (todo) => {
-    setTodosByDay(prev => ({
-      ...prev,
-      [selectedDay]: prev[selectedDay].filter(t => t.id !== todo.id),
-    }));
-    const res = await fetch(`${API}/api/todos/${todo.id}`, { method: 'DELETE' });
-    if (!res.ok) {
-      setTodosByDay(prev => ({
-        ...prev,
-        [selectedDay]: [...(prev[selectedDay] || []), todo],
-      }));
-    }
-  };
-
-  const addTodo = async (e) => {
-    e.preventDefault();
-    const text = addInput.trim();
-    if (!text) return;
-    setAddInput('');
-    const res = await fetch(`${API}/api/todos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task_description: text, day: selectedDay }),
-    });
-    if (!res.ok) return;
-    const created = await res.json();
-    setTodosByDay(prev => ({
-      ...prev,
-      [selectedDay]: [...(prev[selectedDay] || []), created],
-    }));
-  };
-
-  return (
-    <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 transition-colors text-sm"
-          >
-            ‹
-          </button>
-          <h2 className="text-sm font-semibold text-slate-900">
-            {dayLabel(selectedDay)}
-            <span className="ml-2 text-slate-400 font-normal text-xs">{selectedDay}</span>
-          </h2>
-          <button
-            onClick={() => navigate(1)}
-            disabled={selectedDay >= todayBucket}
-            className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed text-slate-500 transition-colors text-sm"
-          >
-            ›
-          </button>
-        </div>
-        <span className="text-xs text-slate-400">
-          {doneCount} / {todosForDay.length} done
-        </span>
-      </div>
-
-      <div className="space-y-1 min-h-[60px]">
-        {todosForDay.length === 0 && (
-          <p className="text-xs text-slate-400 py-3 text-center">No tasks for this day.</p>
-        )}
-        {todosForDay.map(todo => (
-          <div
-            key={todo.id}
-            className="flex items-start gap-3 px-2 py-1.5 rounded-md hover:bg-slate-50 transition-colors group"
-            onMouseEnter={() => setHoveredId(todo.id)}
-            onMouseLeave={() => setHoveredId(null)}
-          >
-            <button
-              onClick={() => toggle(todo)}
-              className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
-                todo.is_completed
-                  ? 'bg-orange-500 border-orange-500 text-white'
-                  : 'border-slate-300 hover:border-orange-400'
-              }`}
-            >
-              {!!todo.is_completed && <span className="text-[10px] leading-none">✓</span>}
-            </button>
-            <div className="flex-1 min-w-0">
-              <p className={`text-sm ${todo.is_completed ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-                {todo.task_description}
-              </p>
-              <div className="flex gap-3 mt-0.5">
-                {todo.fulfilled_at && (
-                  <span className="text-[10px] text-emerald-600">
-                    done {new Date(todo.fulfilled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-                {todo.due_date && !todo.fulfilled_at && (
-                  <span className="text-[10px] text-rose-500">due {todo.due_date}</span>
-                )}
-                {todo.source_day && (
-                  <span className="text-[10px] text-slate-400">carried from {todo.source_day}</span>
-                )}
-              </div>
-            </div>
-            {hoveredId === todo.id && (
-              <button
-                onClick={() => deleteTodo(todo)}
-                className="text-slate-300 hover:text-rose-500 text-sm transition-colors flex-shrink-0"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <form onSubmit={addTodo} className="flex items-center gap-2 border-t border-slate-100 pt-3">
-        <input
-          type="text"
-          value={addInput}
-          onChange={e => setAddInput(e.target.value)}
-          placeholder="+ Add a task…"
-          className="flex-1 text-sm text-slate-700 placeholder-slate-400 bg-transparent outline-none"
-        />
-        <button
-          type="submit"
-          disabled={!addInput.trim()}
-          className="text-xs px-2.5 py-1 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white rounded-md transition-colors"
-        >
-          Add
-        </button>
-      </form>
-    </section>
-  );
-}
 
 const SLEEP_MAP = { 'Poor': 0, 'Fair': 0.33, 'Good': 0.67, 'Excellent': 1 };
 const DIET_MAP = { 'Junk/Heavy': 0, 'Carbs Centered': 0.25, 'Meat and Vegetable centered': 0.6, 'Clean': 1 };

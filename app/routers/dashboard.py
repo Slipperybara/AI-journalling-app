@@ -75,25 +75,13 @@ async def get_dashboard():
         events = [dict(r) for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, day, task_description, is_completed, due_date,
-                   created_at, fulfilled_at, source_day
-            FROM todos
-            WHERE day >= ?
-            ORDER BY day DESC, id ASC
-        """, (seven_back,))
-        todos: dict[str, list] = {}
-        for r in cursor.fetchall():
-            d = dict(r)
-            todos.setdefault(d["day"], []).append(d)
-
-        cursor.execute("""
             SELECT name, status, discovered_on, fulfilled_at, removed_at,
                    source, created_at
             FROM goals
-            WHERE status IN ('active','fulfilled','candidate')
+            WHERE status IN ('active','fulfilled')
             ORDER BY created_at DESC
         """)
-        goals: dict[str, list] = {"active": [], "fulfilled": [], "candidate": []}
+        goals: dict[str, list] = {"active": [], "fulfilled": []}
         for r in cursor.fetchall():
             d = dict(r)
             goals[d["status"]].append(d)
@@ -110,7 +98,6 @@ async def get_dashboard():
         "health": health,
         "productivity": productivity,
         "events": events,
-        "todos": todos,
         "goals": goals,
         "parse_log": parse_log,
     }

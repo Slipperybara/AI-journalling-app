@@ -137,6 +137,13 @@ COVERAGE_TODAY (pre-computed by keyword scan of the user's messages today — TR
   Uncovered: {uncovered_today}
 Pick your dimension question from Uncovered. If Uncovered is empty, all six dimensions are touched and you may skip the dimension nudge for this reply. If you think the pre-computed coverage is wrong for a specific dimension (e.g. the keyword matched but the user didn't really discuss it), you may override — but default to trusting it.
 
+GOAL TOOLS (when to call them):
+  - `add_goal(name)`: ONLY after the user explicitly confirms they want a goal tracked. When the user mentions a long-term aim ("I want to train for a marathon", "I'm going to focus on Jane Street prep"), FIRST ask in conversation whether to track it — do NOT call add_goal yet. If on a later turn they confirm ("yes please", "yeah track it"), THEN call add_goal. The 3-active cap is enforced server-side; if the call returns an error about the cap, tell the user they need to fulfill or remove a goal first.
+  - `fulfill_goal(name)`: when the user clearly says they've completed or are done with a tracked goal ("I finished Jane Street prep", "I hit my marathon"). Call immediately with the matching active goal name; no confirmation needed.
+  - `remove_goal(name)`: when the user says they're dropping or want to remove a tracked goal ("drop Jane Street prep", "remove that"). Call immediately with the matching name.
+  - `rename_goal(old_name, new_name)`: when the user explicitly asks to rename a goal ("rename Jane Street to JS Prep"). Call immediately.
+  After a tool call, generate ONE user-facing reply acknowledging what changed in plain prose. Do not list the tool result verbatim.
+
 REPLY STYLE:
   - Varuing length depending on topic. No bullets, headings, markdown, or emoji.
   - Plain prose, empathetic conversational tone. Don't sound like a form.
@@ -154,8 +161,6 @@ RECENT_DAYS (parsed data from the last 3 days — reference for patterns):
 SUMMARY_7DAY:
 {summary_json}
 
-PENDING_TODOS (still open from prior days):
-{pending_todos_json}
 {graph_facts_block}"""
 
 
@@ -266,22 +271,11 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         """, (seven_back,))
         summary["events_7day"] = {r["event_type"]: r["n"] for r in cursor.fetchall() if r["event_type"]}
 
-        cursor.execute("""
-            SELECT task_description, due_date, day
-            FROM todos
-            WHERE is_completed = 0
-            ORDER BY id DESC
-            LIMIT 20
-        """)
-        pending_todos = [dict(r) for r in cursor.fetchall()]
-        summary["todos_pending"] = len(pending_todos)
-
     covered = _detect_covered_dimensions(today_transcript)
     all_dims = set(DIMENSION_KEYWORDS.keys())
     return {
         "today_transcript": today_transcript,
         "recent_days": recent_days,
-        "pending_todos": pending_todos,
         "summary_7day": summary,
         "covered_today": sorted(covered),
         "uncovered_today": sorted(all_dims - covered),
@@ -345,7 +339,6 @@ def generate_bot_reply(
         today_transcript=json.dumps(ctx["today_transcript"], indent=2),
         recent_days_json=json.dumps(ctx["recent_days"], indent=2),
         summary_json=json.dumps(ctx["summary_7day"], indent=2),
-        pending_todos_json=json.dumps(ctx["pending_todos"], indent=2),
         covered_today=covered_display,
         uncovered_today=uncovered_display,
         graph_facts_block=graph_facts_block,
@@ -355,12 +348,151 @@ def generate_bot_reply(
     for m in fetch_chat_history(conversation_id):
         messages.append({"role": m["role"], "content": m["content"]})
 
+    tools = _goal_tools()
+
+    # Multi-round tool dispatch. Cap at 2 rounds so the model can't loop —
+    # after that, we accept the next text response even if it tries to call
+    # more tools. Typical conversation: 1 round (no tools) or 2 rounds (tool
+    # call → ack reply).
+    for _ in range(2):
+        completion = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.7,
+        )
+        msg = completion.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        if not tool_calls:
+            return (msg.content or "").strip()
+
+        # Append the assistant's tool-call turn so the next call sees it.
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in tool_calls
+            ],
+        })
+        for tc in tool_calls:
+            result = _dispatch_goal_tool(tc.function.name, tc.function.arguments)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result),
+            })
+
+    # Fallback: one more call without tools to force a text reply.
     completion = client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
         temperature=0.7,
     )
-    return completion.choices[0].message.content.strip()
+    return (completion.choices[0].message.content or "").strip()
+
+
+def _goal_tools() -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "add_goal",
+                "description": "Start tracking a new long-term goal. Only call after the user confirms they want it tracked.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Short noun-phrase title for the goal, e.g. 'Marathon Training'."},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "fulfill_goal",
+                "description": "Mark an active goal as fulfilled / completed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Exact name of the active goal to mark fulfilled."},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "remove_goal",
+                "description": "Stop tracking a goal entirely (soft-delete).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Exact name of the goal to remove."},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rename_goal",
+                "description": "Rename a tracked goal. Cascades to graph relationships.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "old_name": {"type": "string", "description": "Current name."},
+                        "new_name": {"type": "string", "description": "New name to use going forward."},
+                    },
+                    "required": ["old_name", "new_name"],
+                },
+            },
+        },
+    ]
+
+
+def _dispatch_goal_tool(name: str, arguments_json: str) -> dict:
+    """Execute a tool call from the model. Returns a JSON-serializable dict
+    describing the outcome — model receives this as the tool result and
+    decides how to phrase the user-facing reply."""
+    from . import goals as goals_svc
+
+    try:
+        args = json.loads(arguments_json or "{}")
+    except json.JSONDecodeError:
+        return {"error": "invalid_arguments", "detail": arguments_json}
+
+    try:
+        if name == "add_goal":
+            row = goals_svc.add_user_goal(args.get("name", ""))
+            return {"ok": True, "goal": row}
+        if name == "fulfill_goal":
+            row = goals_svc.mark_fulfilled(args.get("name", ""))
+            return {"ok": True, "goal": row}
+        if name == "remove_goal":
+            row = goals_svc.mark_removed(args.get("name", ""))
+            return {"ok": True, "goal": row}
+        if name == "rename_goal":
+            row = goals_svc.rename_goal(args.get("old_name", ""), args.get("new_name", ""))
+            return {"ok": True, "goal": row}
+    except goals_svc.GoalCapReachedError:
+        return {"error": "cap_reached", "detail": "3 active goals already; fulfill or remove one first"}
+    except goals_svc.GoalExistsError as exc:
+        return {"error": "already_exists", "detail": f"goal '{exc}' already exists"}
+    except goals_svc.GoalNotFoundError as exc:
+        return {"error": "not_found", "detail": f"no matching goal '{exc}'"}
+    except ValueError as exc:
+        return {"error": "bad_input", "detail": str(exc)}
+
+    return {"error": "unknown_tool", "detail": name}
 
 
 def store_assistant_message(conversation_id: int, content: str) -> int:

@@ -48,9 +48,8 @@ EXTRACTION_TABLES = (
     "event_topics",
     "event_goal_contributions",
 )
-# `todos` and `goals` are intentionally excluded — both are user-managed
-# (added via the dashboard or kept across carryover) and re-parsing a day
-# must not wipe them.
+# `goals` is intentionally excluded — it's user-managed via chat/slash
+# commands and must survive day re-parses.
 
 
 def _has_legacy_extraction_schema(cursor: sqlite3.Cursor) -> bool:
@@ -164,25 +163,8 @@ def init_db() -> None:
             )
         """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS todos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                day TEXT NOT NULL,
-                task_description TEXT NOT NULL,
-                is_completed INTEGER DEFAULT 0,
-                due_date TEXT
-            )
-        """)
-
-        # Todos v2 migration: add audit/carryover columns
-        for col, definition in [
-            ("created_at", "TEXT"),
-            ("fulfilled_at", "TEXT"),
-            ("source_day", "TEXT"),
-        ]:
-            cursor.execute("PRAGMA table_info(todos)")
-            if not any(r[1] == col for r in cursor.fetchall()):
-                cursor.execute(f"ALTER TABLE todos ADD COLUMN {col} {definition}")
+        # TODOs are gone — the table is dropped if present from a prior schema.
+        cursor.execute("DROP TABLE IF EXISTS todos")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS event_topics (

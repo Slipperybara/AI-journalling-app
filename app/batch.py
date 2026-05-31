@@ -39,49 +39,6 @@ def _format_batch_prompt(messages: List[dict]) -> str:
     return "\n".join(parts)
 
 
-def carryover_unfilled_todos(from_day: str, to_day: str) -> int:
-    """Copy unfilled todos from from_day into to_day as new rows.
-    Idempotent: skips if any rows with source_day=from_day already exist in to_day."""
-    with connect() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT COUNT(*) FROM todos WHERE day = ? AND source_day = ?",
-            (to_day, from_day),
-        )
-        if cursor.fetchone()[0] > 0:
-            return 0
-        cursor.execute("""
-            INSERT INTO todos (day, task_description, is_completed, due_date, created_at, source_day)
-            SELECT ?, task_description, 0, due_date, ?, ?
-            FROM todos
-            WHERE day = ? AND is_completed = 0
-        """, (to_day, datetime.now().isoformat(), from_day, from_day))
-        return cursor.rowcount
-
-
-def catch_up_carryover(days_back: int = 7) -> int:
-    """Sweep N days backward, ensuring unfulfilled todos chain forward day by day.
-
-    Each adjacent-pair carryover is idempotent, so this safely covers gaps
-    introduced when the 6 AM scheduler missed a day (server down, laptop
-    asleep, etc.). Walks oldest -> newest so each step's carry can be picked
-    up by the next step's source-day query."""
-    today = current_bucket()
-    total = 0
-    for delta in range(days_back, 0, -1):
-        from_day = (today - timedelta(days=delta)).isoformat()
-        to_day = (today - timedelta(days=delta - 1)).isoformat()
-        try:
-            n = carryover_unfilled_todos(from_day, to_day)
-            if n:
-                print(f"[carryover] caught up {n} todo(s) {from_day} -> {to_day}")
-                total += n
-        except Exception:
-            print(f"[carryover] failed {from_day} -> {to_day}")
-            traceback.print_exc()
-    return total
-
-
 def _mark_parse_log(day: str, status: str, error: str = None) -> None:
     with connect() as conn:
         cursor = conn.cursor()
@@ -156,7 +113,8 @@ def backfill_all_message_days() -> int:
 
 
 def run_scheduled_batch() -> None:
-    """Cron entrypoint. Parses yesterday's bucket, writes to Neo4j, carries over todos."""
+    """Cron entrypoint. Parses yesterday's bucket, writes to Neo4j,
+    posts the morning brief into a fresh conversation."""
     yesterday = (current_bucket() - timedelta(days=1)).isoformat()
     today = current_bucket().isoformat()
 
@@ -181,20 +139,11 @@ def run_scheduled_batch() -> None:
 
     # Morning brief: post today's automated welcome with yesterday's analysis,
     # active-goal momentum, and one grounded suggestion. Idempotent via
-    # morning_brief_log; safe on cron + catch-up + manual triggers. Failure
-    # here must NOT block the carryover step below.
+    # morning_brief_log; safe on cron + catch-up + manual triggers.
     try:
         from . import morning_brief
         brief = morning_brief.post_morning_brief(today)
         print(f"[batch] morning brief: {brief}")
     except Exception:
         print(f"[batch] morning brief failed for {today}")
-        traceback.print_exc()
-
-    try:
-        n = carryover_unfilled_todos(yesterday, today)
-        if n:
-            print(f"[batch] carried over {n} unfilled todo(s) from {yesterday} to {today}")
-    except Exception:
-        print(f"[batch] carryover failed")
         traceback.print_exc()

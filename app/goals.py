@@ -3,27 +3,25 @@
 SQLite is the source of truth. Neo4j is a derived projection — every mutation
 writes SQLite first, then calls `sync_goal_to_graph(name)` which re-reads the
 row and reflects state into Neo4j (MERGE/SET for active+fulfilled, DETACH
-DELETE for removed/candidate). The nightly reconcile pass in
+DELETE for removed). The nightly reconcile pass in
 `graph_maintenance.reconcile_goals` re-invokes the same projection to repair
 any drift.
 
 Cap policy: at most `settings.max_active_goals` goals may have status='active'.
-Excess goals (both agent-discovered and user-added) land as 'candidate' and
-sit in SQLite only. There is no auto-promote — a freed slot stays open until
-the user explicitly promotes a candidate.
+Adds while at cap raise `GoalCapReachedError` — the caller (chat tool / slash
+command / API endpoint) surfaces a clear "fulfill or remove one first" message.
 """
-import json
 import sqlite3
 from datetime import datetime
 from typing import Optional
 
-from .core import client, settings
+from .core import settings
 from .db import connect
 from .graph_db import graph_connect
 from .time_buckets import current_bucket
 
 
-VALID_STATUSES = {"active", "fulfilled", "removed", "candidate"}
+VALID_STATUSES = {"active", "fulfilled", "removed"}
 
 
 class GoalExistsError(Exception):
@@ -35,16 +33,12 @@ class GoalNotFoundError(Exception):
 
 
 class GoalCapReachedError(Exception):
-    """Raised when promote_candidate runs while max_active_goals is already active."""
+    """Raised when add or rename would push active goal count above the cap."""
 
 
 def _count_active(cursor: sqlite3.Cursor) -> int:
     cursor.execute("SELECT COUNT(*) AS n FROM goals WHERE status='active'")
     return cursor.fetchone()["n"]
-
-
-def _new_status_under_cap(cursor: sqlite3.Cursor) -> str:
-    return "active" if _count_active(cursor) < settings.max_active_goals else "candidate"
 
 
 def _row_dict(row: sqlite3.Row) -> dict:
@@ -75,6 +69,9 @@ def _fetch_row(name: str) -> Optional[sqlite3.Row]:
 
 
 def add_user_goal(name: str) -> dict:
+    """Add a goal as 'active'. Raises GoalExistsError if the name is already
+    in active/fulfilled state, GoalCapReachedError if 3 active already.
+    Resurrects a soft-removed row by name (subject to the cap)."""
     name = (name or "").strip()
     if not name:
         raise ValueError("goal name cannot be blank")
@@ -90,66 +87,27 @@ def add_user_goal(name: str) -> dict:
         if existing is not None and existing["status"] != "removed":
             raise GoalExistsError(name)
 
-        new_status = _new_status_under_cap(cursor)
+        if _count_active(cursor) >= settings.max_active_goals:
+            raise GoalCapReachedError(name)
 
         if existing is not None:
             # Resurrect a soft-deleted row.
             cursor.execute(
                 """
                 UPDATE goals
-                SET status = ?, source = 'user', removed_at = NULL
+                SET status = 'active', source = 'user', removed_at = NULL
                 WHERE name = ?
                 """,
-                (new_status, name),
+                (name,),
             )
         else:
             cursor.execute(
                 """
                 INSERT INTO goals (name, discovered_on, status, source)
-                VALUES (?, ?, ?, 'user')
+                VALUES (?, ?, 'active', 'user')
                 """,
-                (name, today, new_status),
+                (name, today),
             )
-
-    sync_goal_to_graph(name)
-    return _row_dict(_fetch_row(name))
-
-
-def add_agent_goal(name: str, day: str) -> dict:
-    """Insert (or skip) an LLM-discovered goal. Runs semantic dedup against
-    existing active+fulfilled goals; if a dupe is found, returns the canonical
-    existing row and inserts nothing."""
-    name = (name or "").strip()
-    if not name:
-        return None
-
-    with connect() as conn:
-        cursor = conn.cursor()
-        existing = cursor.execute(
-            "SELECT * FROM goals WHERE name = ?", (name,)
-        ).fetchone()
-        if existing is not None:
-            return dict(existing)
-
-        candidates = cursor.execute(
-            "SELECT name FROM goals WHERE status IN ('active','fulfilled')"
-        ).fetchall()
-        existing_names = [r["name"] for r in candidates]
-
-    canonical = _semantic_dedup_against_existing(name, existing_names)
-    if canonical is not None:
-        return _row_dict(_fetch_row(canonical))
-
-    with connect() as conn:
-        cursor = conn.cursor()
-        new_status = _new_status_under_cap(cursor)
-        cursor.execute(
-            """
-            INSERT INTO goals (name, discovered_on, status, source)
-            VALUES (?, ?, ?, 'agent')
-            """,
-            (name, day, new_status),
-        )
 
     sync_goal_to_graph(name)
     return _row_dict(_fetch_row(name))
@@ -163,7 +121,7 @@ def mark_fulfilled(name: str) -> dict:
             """
             UPDATE goals
             SET status = 'fulfilled', fulfilled_at = ?
-            WHERE name = ? AND status IN ('active','candidate')
+            WHERE name = ? AND status = 'active'
             """,
             (now, name),
         )
@@ -182,7 +140,7 @@ def mark_removed(name: str) -> dict:
             """
             UPDATE goals
             SET status = 'removed', removed_at = ?
-            WHERE name = ? AND status IN ('active','fulfilled','candidate')
+            WHERE name = ? AND status IN ('active','fulfilled')
             """,
             (now, name),
         )
@@ -193,33 +151,65 @@ def mark_removed(name: str) -> dict:
     return _row_dict(_fetch_row(name))
 
 
-def promote_candidate(name: str) -> dict:
+def rename_goal(old_name: str, new_name: str) -> dict:
+    """Rename a goal. Cascades to event_goal_contributions and the Neo4j
+    Goal node. Raises GoalNotFoundError if no matching active/fulfilled row
+    or GoalExistsError if the new name is already taken by another active /
+    fulfilled goal."""
+    old_name = (old_name or "").strip()
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise ValueError("new goal name cannot be blank")
+    if old_name == new_name:
+        return _row_dict(_fetch_row(old_name))
+
     with connect() as conn:
         cursor = conn.cursor()
-        row = cursor.execute(
-            "SELECT * FROM goals WHERE name = ?", (name,)
+        old_row = cursor.execute(
+            "SELECT * FROM goals WHERE name = ? AND status IN ('active','fulfilled')",
+            (old_name,),
         ).fetchone()
-        if row is None or row["status"] != "candidate":
-            raise GoalNotFoundError(name)
-        if _count_active(cursor) >= settings.max_active_goals:
-            raise GoalCapReachedError(name)
+        if old_row is None:
+            raise GoalNotFoundError(old_name)
+        collision = cursor.execute(
+            "SELECT name FROM goals WHERE name = ? AND status IN ('active','fulfilled')",
+            (new_name,),
+        ).fetchone()
+        if collision is not None:
+            raise GoalExistsError(new_name)
+
         cursor.execute(
-            "UPDATE goals SET status = 'active' WHERE name = ?", (name,)
+            "UPDATE goals SET name = ? WHERE name = ?",
+            (new_name, old_name),
+        )
+        cursor.execute(
+            "UPDATE event_goal_contributions SET goal_name = ? WHERE goal_name = ?",
+            (new_name, old_name),
         )
 
-    sync_goal_to_graph(name)
-    return _row_dict(_fetch_row(name))
+    # Neo4j: drop the old node (it's keyed by the old name), then project the
+    # renamed row. Edges to the old node are lost, but reconcile_extractions
+    # re-creates CONTRIBUTES_TO edges from event_goal_contributions on the
+    # next run; for immediate consistency we sync events that reference the
+    # goal too.
+    with graph_connect() as session:
+        session.run(
+            "MATCH (g:Goal {name: $name}) DETACH DELETE g", name=old_name
+        )
+    sync_goal_to_graph(new_name)
+
+    return _row_dict(_fetch_row(new_name))
 
 
 def sync_goal_to_graph(name: str) -> None:
     """Project the current SQLite row into Neo4j. Idempotent.
 
-    - row missing OR status in {removed, candidate} → DETACH DELETE node
+    - row missing OR status='removed' → DETACH DELETE node
     - status in {active, fulfilled} → MERGE node with status + fulfilled_at
     """
     row = _fetch_row(name)
     with graph_connect() as session:
-        if row is None or row["status"] in ("removed", "candidate"):
+        if row is None or row["status"] == "removed":
             session.run(
                 "MATCH (g:Goal {name: $name}) DETACH DELETE g", name=name
             )
@@ -238,51 +228,3 @@ def sync_goal_to_graph(name: str) -> None:
         )
 
 
-def _semantic_dedup_against_existing(
-    candidate_name: str, existing_names: list[str]
-) -> Optional[str]:
-    """Ask gpt-4o whether `candidate_name` is a semantic duplicate of any
-    existing goal. Returns the matched existing name, or None.
-
-    Defends against hallucination by verifying the returned name is in the
-    provided list."""
-    if not existing_names:
-        return None
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are deduplicating user-tracked long-term goals. "
-                    "Given a new candidate goal and a list of existing goals, "
-                    "return JSON {\"duplicate_of\": \"<existing name>\"} if the "
-                    "candidate is semantically the same objective as one of the "
-                    "existing names (different phrasing of the same goal), or "
-                    "{\"duplicate_of\": null} otherwise. Only match true duplicates; "
-                    "preserve nuance — e.g. 'Run a marathon' and 'Run a half marathon' "
-                    "are NOT duplicates."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Candidate: {candidate_name}\n"
-                    f"Existing goals: {json.dumps(existing_names)}"
-                ),
-            },
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-
-    try:
-        data = json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, AttributeError):
-        return None
-
-    match = data.get("duplicate_of")
-    if isinstance(match, str) and match in existing_names:
-        return match
-    return None

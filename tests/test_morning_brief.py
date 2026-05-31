@@ -174,10 +174,7 @@ def test_brand_new_user_posts_welcome():
         existing_goal_count = conn.execute(
             "SELECT COUNT(*) AS n FROM goals WHERE status='active'"
         ).fetchone()["n"]
-        existing_todo_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM todos WHERE is_completed = 0"
-        ).fetchone()["n"]
-    if existing_goal_count > 0 or existing_todo_count > 0:
+    if existing_goal_count > 0:
         pytest.skip(
             "Cannot run brand-new-user test against a populated journal.db"
         )
