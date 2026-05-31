@@ -100,21 +100,21 @@ export default function App() {
     return conv.id;
   }, [fetchConversations]);
 
-  // Boot: open a chat in today's 6-AM bucket. Auto-create a fresh one if the newest
-  // conversation is from a previous bucket (or none exists yet). The new chat still
-  // inherits the day's accumulated context via the backend's day-wide TODAY_TRANSCRIPT.
+  // Boot: open the latest conversation in today's bucket if one exists
+  // (e.g. the morning brief, or a chat the user already started today).
+  // Otherwise leave activeConvId null — a new conversation is created lazily
+  // on the first send, so the sidebar doesn't show empty 'New Conversation'
+  // entries the user never used.
   useEffect(() => {
     (async () => {
       const list = await fetchConversations();
       const newest = list[0];
       const todayBucket = bucketKey(new Date());
-      if (!newest || bucketKey(newest.started_at) !== todayBucket) {
-        await createConversation();
-      } else {
+      if (newest && bucketKey(newest.started_at) === todayBucket) {
         setActiveConvId(newest.id);
       }
     })();
-  }, [fetchConversations, createConversation]);
+  }, [fetchConversations]);
 
   // Whenever active conv changes, load its messages
   useEffect(() => {
@@ -189,13 +189,13 @@ export default function App() {
 
   const sendMessage = async () => {
     const text = input.trim();
-    if (!text || !activeConvId || isWaiting) return;
+    if (!text || isWaiting) return;
 
     setInput('');
 
-    // Slash-command interception: dispatch to the goals API before posting
-    // through the bot. Mutations refresh the dashboard so the GoalsStrip
-    // updates. /goal list short-circuits — it doesn't go through the bot.
+    // Slash-command interception runs before we touch the conversation —
+    // /goal list and failed mutations just inject a local-only message and
+    // never need a backing conversation row.
     const goalResult = await tryGoalCommand(text);
     if (goalResult) {
       if (goalResult.ok) {
@@ -220,6 +220,13 @@ export default function App() {
       // can acknowledge naturally.
     }
 
+    // Lazily create a conversation on the first real send. Keeps empty
+    // 'New Conversation' rows out of the sidebar.
+    let convId = activeConvId;
+    if (!convId) {
+      convId = await createConversation();
+    }
+
     setIsWaiting(true);
 
     // Optimistic user message
@@ -232,7 +239,7 @@ export default function App() {
     setMessages(prev => [...prev, optimistic]);
 
     try {
-      const res = await fetch(`${API}/api/conversations/${activeConvId}/messages`, {
+      const res = await fetch(`${API}/api/conversations/${convId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text }),
@@ -248,7 +255,7 @@ export default function App() {
       const start = Date.now();
       pollRef.current = setInterval(async () => {
         try {
-          const fresh = await loadMessages(activeConvId);
+          const fresh = await loadMessages(convId);
           const hasNewAssistant = fresh.some(m => m.role === 'assistant' && m.id > baselineId);
           if (hasNewAssistant) {
             clearInterval(pollRef.current);
