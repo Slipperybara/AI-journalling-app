@@ -17,7 +17,7 @@ async def get_messages(conv_id: int):
         cursor.execute("""
             SELECT id, role, content, created_at
             FROM messages
-            WHERE conversation_id = ?
+            WHERE conversation_id = %s
             ORDER BY id ASC
         """, (conv_id,))
         return [dict(r) for r in cursor.fetchall()]
@@ -30,16 +30,17 @@ async def post_message(conv_id: int, msg: MessageCreate, background_tasks: Backg
 
     with connect() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM conversations WHERE id = ?", (conv_id,))
+        cursor.execute("SELECT id FROM conversations WHERE id = %s", (conv_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Conversation not found")
 
         created_at = datetime.now().isoformat()
         cursor.execute("""
             INSERT INTO messages (conversation_id, role, content, created_at)
-            VALUES (?, 'user', ?, ?)
+            VALUES (%s, 'user', %s, %s)
+            RETURNING id
         """, (conv_id, msg.content, created_at))
-        msg_id = cursor.lastrowid
+        msg_id = cursor.fetchone()["id"]
 
     background_tasks.add_task(process_message_background, conv_id, msg.content)
     return {"id": msg_id, "role": "user", "content": msg.content, "created_at": created_at}

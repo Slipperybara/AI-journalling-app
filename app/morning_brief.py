@@ -17,7 +17,7 @@ from typing import Optional
 from . import goals as goals_svc
 from .bot import store_assistant_message
 from .core import client
-from .db import connect, loads
+from .db import connect
 from .graph_db import graph_connect
 
 
@@ -28,7 +28,7 @@ def post_morning_brief(day: str) -> dict:
     """
     with connect() as conn:
         existing = conn.execute(
-            "SELECT day, status, conversation_id FROM morning_brief_log WHERE day = ?",
+            "SELECT day, status, conversation_id FROM morning_brief_log WHERE day = %s",
             (day,),
         ).fetchone()
     if existing is not None and existing["status"] in ("posted", "skipped_empty"):
@@ -79,42 +79,42 @@ def _gather_context(day: str) -> dict:
 
     with connect() as conn:
         parse_log = conn.execute(
-            "SELECT status FROM parse_log WHERE day = ?", (yesterday,)
+            "SELECT status FROM parse_log WHERE day = %s", (yesterday,)
         ).fetchone()
 
         yest_emotion = conn.execute(
             "SELECT valence, arousal, primary_quadrant, cognitive_labels, "
-            "cognitive_triggers FROM emotional_analysis WHERE day = ?",
+            "cognitive_triggers FROM emotional_analysis WHERE day = %s",
             (yesterday,),
         ).fetchone()
         yest_health = conn.execute(
             "SELECT sleep_quality, exercise_type, diet_quality, somatic_sensations, "
-            "physical_performance FROM health_metrics WHERE day = ?",
+            "physical_performance FROM health_metrics WHERE day = %s",
             (yesterday,),
         ).fetchone()
         yest_productivity = conn.execute(
             "SELECT deep_work_hours, shallow_work_hours, cognitive_load, "
-            "friction_points FROM productivity_metrics WHERE day = ?",
+            "friction_points FROM productivity_metrics WHERE day = %s",
             (yesterday,),
         ).fetchone()
         yest_events = conn.execute(
-            "SELECT title, description, event_type, tags FROM events WHERE day = ?",
+            "SELECT title, description, event_type, tags FROM events WHERE day = %s",
             (yesterday,),
         ).fetchall()
 
         seven_emotion = conn.execute(
             "SELECT day, valence, arousal, primary_quadrant FROM emotional_analysis "
-            "WHERE day >= ? AND day < ? ORDER BY day",
+            "WHERE day >= %s AND day < %s ORDER BY day",
             (seven_back, day),
         ).fetchall()
         seven_health = conn.execute(
             "SELECT day, sleep_quality, exercise_type, diet_quality FROM health_metrics "
-            "WHERE day >= ? AND day < ? ORDER BY day",
+            "WHERE day >= %s AND day < %s ORDER BY day",
             (seven_back, day),
         ).fetchall()
         seven_productivity = conn.execute(
             "SELECT day, deep_work_hours, cognitive_load FROM productivity_metrics "
-            "WHERE day >= ? AND day < ? ORDER BY day",
+            "WHERE day >= %s AND day < %s ORDER BY day",
             (seven_back, day),
         ).fetchall()
 
@@ -153,7 +153,7 @@ def _row_or_none(row) -> Optional[dict]:
     d = dict(row)
     for k in ("cognitive_labels", "cognitive_triggers", "somatic_sensations", "friction_points"):
         if k in d:
-            d[k] = loads(d[k])
+            d[k] = (d[k] or [])
     return d
 
 
@@ -289,9 +289,9 @@ def _post_to_conversation(brief_text: str, day: str) -> int:
     with connect() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO conversations (started_at) VALUES (?)", (started_at,)
+            "INSERT INTO conversations (started_at) VALUES (%s) RETURNING id", (started_at,)
         )
-        conv_id = cursor.lastrowid
+        conv_id = cursor.fetchone()["id"]
     store_assistant_message(conv_id, brief_text)
     return conv_id
 
@@ -301,7 +301,7 @@ def _log(day: str, status: str, conversation_id: int, error: Optional[str] = Non
         conn.execute(
             """
             INSERT INTO morning_brief_log (day, posted_at, conversation_id, status, error)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT(day) DO UPDATE SET
                 posted_at = excluded.posted_at,
                 conversation_id = excluded.conversation_id,

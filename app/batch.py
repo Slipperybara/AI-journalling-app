@@ -25,7 +25,7 @@ def _delete_existing_rows(day: str) -> None:
     with connect() as conn:
         cursor = conn.cursor()
         for table in EXTRACTION_TABLES:
-            cursor.execute(f"DELETE FROM {table} WHERE day = ?", (day,))
+            cursor.execute(f"DELETE FROM {table} WHERE day = %s", (day,))
 
 
 def _format_batch_prompt(messages: List[dict]) -> str:
@@ -44,7 +44,7 @@ def _mark_parse_log(day: str, status: str, error: str = None) -> None:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO parse_log (day, status, parsed_at, error)
-            VALUES (?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT(day) DO UPDATE SET
                 status = excluded.status,
                 parsed_at = excluded.parsed_at,

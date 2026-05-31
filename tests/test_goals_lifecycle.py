@@ -18,10 +18,10 @@ TEST_PREFIX = "__lifecycle_test__"
 def _cleanup():
     with connect() as conn:
         conn.execute(
-            "DELETE FROM goals WHERE name LIKE ?", (TEST_PREFIX + "%",)
+            "DELETE FROM goals WHERE name LIKE %s", (TEST_PREFIX + "%",)
         )
         conn.execute(
-            "DELETE FROM event_goal_contributions WHERE goal_name LIKE ?",
+            "DELETE FROM event_goal_contributions WHERE goal_name LIKE %s",
             (TEST_PREFIX + "%",),
         )
     with graph_connect() as s:
@@ -95,7 +95,7 @@ def test_mark_removed_hard_deletes_from_graph():
     assert _graph_status(name) is None
     with connect() as conn:
         row = conn.execute(
-            "SELECT status, removed_at FROM goals WHERE name = ?", (name,)
+            "SELECT status, removed_at FROM goals WHERE name = %s", (name,)
         ).fetchone()
     assert row["status"] == "removed"
     assert row["removed_at"] is not None
@@ -107,7 +107,7 @@ def test_sync_goal_to_graph_idempotent_status_change():
     assert _graph_status(name) == "active"
     with connect() as conn:
         conn.execute(
-            "UPDATE goals SET status = 'fulfilled', fulfilled_at = '2026-01-01T00:00:00' WHERE name = ?",
+            "UPDATE goals SET status = 'fulfilled', fulfilled_at = '2026-01-01T00:00:00' WHERE name = %s",
             (name,),
         )
     goals_svc.sync_goal_to_graph(name)
@@ -161,7 +161,7 @@ def test_rename_goal_updates_sqlite_and_graph():
     with connect() as conn:
         conn.execute(
             "INSERT INTO event_goal_contributions (day, event_title, goal_name) "
-            "VALUES ('2026-01-01', 'Some Event', ?)",
+            "VALUES ('2026-01-01', 'Some Event', %s)",
             (old,),
         )
 
@@ -172,7 +172,7 @@ def test_rename_goal_updates_sqlite_and_graph():
 
     with connect() as conn:
         old_row = conn.execute(
-            "SELECT name FROM goals WHERE name = ?", (old,)
+            "SELECT name FROM goals WHERE name = %s", (old,)
         ).fetchone()
         cascade = conn.execute(
             "SELECT goal_name FROM event_goal_contributions WHERE event_title = 'Some Event'"

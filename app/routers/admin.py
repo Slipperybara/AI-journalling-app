@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from ..batch import parse_day
 from ..core import settings
 from ..day_messages import get_days_with_messages, get_messages_for_day
-from ..db import connect, loads
+from ..db import connect
 from .. import morning_brief
 
 
@@ -63,59 +63,52 @@ async def inspect_day(day: str):
         cursor.execute("""
             SELECT valence, arousal, primary_quadrant,
                    cognitive_labels, cognitive_triggers, social_interactions
-            FROM emotional_analysis WHERE day = ?
+            FROM emotional_analysis WHERE day = %s
         """, (day,))
         row = cursor.fetchone()
         if row:
             emotional = dict(row)
-            emotional["cognitive_labels"] = loads(emotional.get("cognitive_labels"))
-            emotional["cognitive_triggers"] = loads(emotional.get("cognitive_triggers"))
-            emotional["social_interactions"] = loads(emotional.get("social_interactions"))
+            emotional["cognitive_labels"] = (emotional.get("cognitive_labels") or [])
+            emotional["cognitive_triggers"] = (emotional.get("cognitive_triggers") or [])
+            emotional["social_interactions"] = (emotional.get("social_interactions") or [])
         else:
             emotional = None
 
         cursor.execute("""
             SELECT sleep_quality, exercise_type, diet_quality,
                    somatic_sensations, physical_performance, supplements
-            FROM health_metrics WHERE day = ?
+            FROM health_metrics WHERE day = %s
         """, (day,))
         row = cursor.fetchone()
         if row:
             health = dict(row)
-            health["somatic_sensations"] = loads(health.get("somatic_sensations"))
-            health["supplements"] = loads(health.get("supplements"))
+            health["somatic_sensations"] = (health.get("somatic_sensations") or [])
+            health["supplements"] = (health.get("supplements") or [])
         else:
             health = None
 
         cursor.execute("""
             SELECT deep_work_hours, shallow_work_hours, time_block_adherence,
                    cognitive_load, friction_points
-            FROM productivity_metrics WHERE day = ?
+            FROM productivity_metrics WHERE day = %s
         """, (day,))
         row = cursor.fetchone()
         if row:
             productivity = dict(row)
-            productivity["friction_points"] = loads(productivity.get("friction_points"))
+            productivity["friction_points"] = (productivity.get("friction_points") or [])
         else:
             productivity = None
 
         cursor.execute("""
             SELECT id, title, description, tags, event_type
-            FROM events WHERE day = ?
+            FROM events WHERE day = %s
             ORDER BY id ASC
         """, (day,))
         events = [dict(r) for r in cursor.fetchall()]
 
         cursor.execute("""
-            SELECT id, task_description, is_completed, due_date
-            FROM todos WHERE day = ?
-            ORDER BY id ASC
-        """, (day,))
-        todos = [dict(r) for r in cursor.fetchall()]
-
-        cursor.execute("""
             SELECT day, status, parsed_at, error
-            FROM parse_log WHERE day = ?
+            FROM parse_log WHERE day = %s
         """, (day,))
         log_row = cursor.fetchone()
         parse_log = dict(log_row) if log_row else None
@@ -129,7 +122,6 @@ async def inspect_day(day: str):
             "health": health,
             "productivity": productivity,
             "events": events,
-            "todos": todos,
         },
         "parse_log": parse_log,
     }

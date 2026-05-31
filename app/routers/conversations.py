@@ -13,8 +13,8 @@ async def create_conversation():
     started_at = datetime.now().isoformat()
     with connect() as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO conversations (started_at) VALUES (?)", (started_at,))
-        conv_id = cursor.lastrowid
+        cursor.execute("INSERT INTO conversations (started_at) VALUES (%s) RETURNING id", (started_at,))
+        conv_id = cursor.fetchone()["id"]
     return {"id": conv_id, "started_at": started_at}
 
 

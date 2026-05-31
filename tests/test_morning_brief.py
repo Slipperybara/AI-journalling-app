@@ -27,15 +27,15 @@ def _make_openai_response(content: str):
 def _cleanup():
     with connect() as conn:
         conv_rows = conn.execute(
-            "SELECT conversation_id FROM morning_brief_log WHERE day = ?",
+            "SELECT conversation_id FROM morning_brief_log WHERE day = %s",
             (TEST_DAY,),
         ).fetchall()
         for r in conv_rows:
             cid = r["conversation_id"]
             if cid:
-                conn.execute("DELETE FROM messages WHERE conversation_id = ?", (cid,))
-                conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
-        conn.execute("DELETE FROM morning_brief_log WHERE day = ?", (TEST_DAY,))
+                conn.execute("DELETE FROM messages WHERE conversation_id = %s", (cid,))
+                conn.execute("DELETE FROM conversations WHERE id = %s", (cid,))
+        conn.execute("DELETE FROM morning_brief_log WHERE day = %s", (TEST_DAY,))
         for tbl in (
             "emotional_analysis",
             "health_metrics",
@@ -45,9 +45,9 @@ def _cleanup():
             "event_goal_contributions",
         ):
             for d in [TEST_YESTERDAY, *TEST_SEED_DAYS]:
-                conn.execute(f"DELETE FROM {tbl} WHERE day = ?", (d,))
+                conn.execute(f"DELETE FROM {tbl} WHERE day = %s", (d,))
         for d in [TEST_YESTERDAY, *TEST_SEED_DAYS]:
-            conn.execute("DELETE FROM parse_log WHERE day = ?", (d,))
+            conn.execute("DELETE FROM parse_log WHERE day = %s", (d,))
 
 
 @pytest.fixture(autouse=True)
@@ -64,19 +64,19 @@ def _seed_yesterday_data():
     with connect() as conn:
         for d in TEST_SEED_DAYS:
             conn.execute(
-                "INSERT INTO parse_log (day, status, parsed_at) VALUES (?, 'succeeded', ?)",
+                "INSERT INTO parse_log (day, status, parsed_at) VALUES (%s, 'succeeded', %s)",
                 (d, f"{d}T23:59:00"),
             )
             conn.execute(
                 "INSERT INTO emotional_analysis (day, valence, arousal, primary_quadrant, "
                 "cognitive_labels, cognitive_triggers, social_interactions) "
-                "VALUES (?, 0.3, 0.5, 'Peak Performance', '[\"motivated\"]', '[]', '[]')",
+                "VALUES (%s, 0.3, 0.5, 'Peak Performance', '[\"motivated\"]', '[]', '[]')",
                 (d,),
             )
             conn.execute(
                 "INSERT INTO health_metrics (day, sleep_quality, exercise_type, diet_quality, "
                 "somatic_sensations, physical_performance, supplements) "
-                "VALUES (?, 'Good', 'Light Cardio', 'Clean', '[]', null, '[]')",
+                "VALUES (%s, 'Good', 'Light Cardio', 'Clean', '[]', null, '[]')",
                 (d,),
             )
 
@@ -98,12 +98,12 @@ def test_post_brief_creates_conversation_and_message():
 
     with connect() as conn:
         log = conn.execute(
-            "SELECT status, conversation_id FROM morning_brief_log WHERE day = ?",
+            "SELECT status, conversation_id FROM morning_brief_log WHERE day = %s",
             (TEST_DAY,),
         ).fetchone()
         assert log["status"] == "posted"
         msgs = conn.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = ?",
+            "SELECT role, content FROM messages WHERE conversation_id = %s",
             (log["conversation_id"],),
         ).fetchall()
     assert len(msgs) == 1
@@ -131,7 +131,7 @@ def test_idempotent_on_repeat_call():
 
     with connect() as conn:
         n = conn.execute(
-            "SELECT COUNT(*) AS n FROM morning_brief_log WHERE day = ?", (TEST_DAY,)
+            "SELECT COUNT(*) AS n FROM morning_brief_log WHERE day = %s", (TEST_DAY,)
         ).fetchone()["n"]
     assert n == 1
 
@@ -142,13 +142,14 @@ def test_sparse_day_still_posts():
     from app import morning_brief
     with connect() as conn:
         conn.execute(
-            "INSERT INTO parse_log (day, status, parsed_at) VALUES (?, 'empty', ?)",
+            "INSERT INTO parse_log (day, status, parsed_at) VALUES (%s, 'empty', %s)",
             (TEST_YESTERDAY, "2098-12-31T23:59:00"),
         )
         # Seed at least one active goal so brand-new-user path doesn't trigger.
         conn.execute(
-            "INSERT OR IGNORE INTO goals (name, discovered_on, status, source) "
-            "VALUES ('test-goal-keep-context', ?, 'active', 'user')",
+            "INSERT INTO goals (name, discovered_on, status, source) "
+            "VALUES ('test-goal-keep-context', %s, 'active', 'user') "
+            "ON CONFLICT (name) DO NOTHING",
             (TEST_YESTERDAY,),
         )
 
@@ -203,7 +204,7 @@ def test_failure_logged_not_raised():
 
     with connect() as conn:
         log = conn.execute(
-            "SELECT status, error, conversation_id FROM morning_brief_log WHERE day = ?",
+            "SELECT status, error, conversation_id FROM morning_brief_log WHERE day = %s",
             (TEST_DAY,),
         ).fetchone()
     assert log["status"] == "failed"

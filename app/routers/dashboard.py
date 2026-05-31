@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter
 
-from ..db import connect, loads
+from ..db import connect
 from ..time_buckets import current_bucket
 
 
@@ -27,48 +27,48 @@ async def get_dashboard():
             SELECT day, valence, arousal, primary_quadrant,
                    cognitive_labels, cognitive_triggers, social_interactions
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             ORDER BY day DESC
         """, (seven_back,))
         emotional = []
         for r in cursor.fetchall():
             d = dict(r)
-            d["cognitive_labels"] = loads(d.get("cognitive_labels"))
-            d["cognitive_triggers"] = loads(d.get("cognitive_triggers"))
-            d["social_interactions"] = loads(d.get("social_interactions"))
+            d["cognitive_labels"] = (d.get("cognitive_labels") or [])
+            d["cognitive_triggers"] = (d.get("cognitive_triggers") or [])
+            d["social_interactions"] = (d.get("social_interactions") or [])
             emotional.append(d)
 
         cursor.execute("""
             SELECT day, sleep_quality, exercise_type, diet_quality,
                    somatic_sensations, physical_performance, supplements
             FROM health_metrics
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             ORDER BY day DESC
         """, (seven_back,))
         health = []
         for r in cursor.fetchall():
             d = dict(r)
-            d["somatic_sensations"] = loads(d.get("somatic_sensations"))
-            d["supplements"] = loads(d.get("supplements"))
+            d["somatic_sensations"] = (d.get("somatic_sensations") or [])
+            d["supplements"] = (d.get("supplements") or [])
             health.append(d)
 
         cursor.execute("""
             SELECT day, deep_work_hours, shallow_work_hours,
                    time_block_adherence, cognitive_load, friction_points
             FROM productivity_metrics
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             ORDER BY day DESC
         """, (seven_back,))
         productivity = []
         for r in cursor.fetchall():
             d = dict(r)
-            d["friction_points"] = loads(d.get("friction_points"))
+            d["friction_points"] = (d.get("friction_points") or [])
             productivity.append(d)
 
         cursor.execute("""
             SELECT day, title, description, tags, event_type
             FROM events
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             ORDER BY day DESC, id DESC
             LIMIT 40
         """, (seven_back,))

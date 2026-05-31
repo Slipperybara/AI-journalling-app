@@ -5,7 +5,7 @@
 | Phase | Description | Status |
 |---|---|---|
 | **0** | Dependency & config hygiene | ✅ **Complete** (2026-05-31) |
-| **1** | Postgres migration (still single-user) | ⬜ Pending |
+| **1** | Postgres migration (still single-user) | ✅ **Complete** (2026-05-31) |
 | **2** | Multi-tenant data model (Postgres + Neo4j) | ⬜ Pending |
 | **3** | Supabase Google OAuth | ⬜ Pending |
 | **4** | Deploy (Supabase + Hetzner + Render + Vercel) | ⬜ Pending |
@@ -48,27 +48,37 @@ Pure plumbing; no behavior change. Unblocks every later phase.
 - New files: `requirements.txt`, `requirements-dev.txt`, `.env.example`, `journal-frontend/.env.example`
 - Modified: `.gitignore`, `app/core.py` (`cors_origins` field), `main.py` (env-var CORS), `journal-frontend/src/App.jsx:3`
 
-### Phase 1 — Postgres migration (still single-user)  ⬜
+### Phase 1 — Postgres migration (still single-user)  ✅ Complete
 
 Replace SQLite end-to-end. App still works for one user, no multi-tenant changes yet.
 
-- [ ] **Driver:** `psycopg` v3 with `psycopg_pool.ConnectionPool` sized for Render free (start at min=1, max=4).
-- [ ] **`app/db.py`:**
-  - [ ] Replace `connect()` body so it yields a pooled `psycopg.Connection` with `row_factory = psycopg.rows.dict_row`.
-  - [ ] Add a module-level `DATABASE_URL` import from `app/core.py::Settings`.
-  - [ ] Delete the `loads()` helper — `JSONB` columns return native dicts/lists.
-  - [ ] Translate every `CREATE TABLE IF NOT EXISTS` in `init_db()`: `INTEGER PRIMARY KEY AUTOINCREMENT` → `BIGSERIAL PRIMARY KEY`, `TEXT` stays, JSON-as-TEXT columns (`cognitive_labels`, `cognitive_triggers`, `social_interactions`, `tags`, `somatic_sensations`, `supplements`, `friction_points`) become `JSONB`, `day TEXT` stays as `TEXT` (still YYYY-MM-DD).
-  - [ ] Drop the legacy-schema migration block (lines 110-115) and the `_has_legacy_extraction_schema` helper — fresh start, no compat shim.
-  - [ ] Drop the `goals` `ALTER TABLE` loop (lines 197-205) — put `status`, `fulfilled_at`, `removed_at`, `source` directly in `CREATE TABLE`.
-- [ ] **Placeholder + idiom translation across `app/extractions.py`, `app/goals.py`, `app/batch.py`, `app/day_messages.py`, `app/graph_maintenance.py`, `app/morning_brief.py`, every `app/routers/*.py`:**
-  - [ ] `?` → `%s`.
-  - [ ] `INSERT … ON CONFLICT(day) DO UPDATE …` in `app/batch.py:45-52` — syntax is the same in Postgres; just confirm the column list.
-  - [ ] `date(m.created_at, '-6 hours')` in `app/day_messages.py:43,57` and `app/graph_maintenance.py:74` → `(m.created_at::timestamp - INTERVAL '6 hours')::date`.
-  - [ ] `datetime('now')` defaults → `NOW()` or rely on Postgres `DEFAULT now()`.
-- [ ] **Local Postgres for dev:** install Supabase CLI, `supabase init` + `supabase start` provisions a local Postgres on port 54322. Set `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres` in `.env`.
-- [ ] **Tests:** add `tests/conftest.py` fixture that creates and tears down a per-test schema (`CREATE SCHEMA test_<uuid>; SET search_path TO test_<uuid>;`) so the existing pytest suite can run against Postgres without polluting state. **This also fixes the 4 pre-existing `test_goals_lifecycle.py` failures from Phase 0.**
+- [x] **Driver:** `psycopg` v3 with `psycopg_pool.ConnectionPool`, min=1 max=4.
+- [x] **`app/db.py`:**
+  - [x] Replace `connect()` body so it yields a pooled `psycopg.Connection` with `row_factory = dict_row`.
+  - [x] Pool sourced from `settings.database_url`.
+  - [x] Delete the `loads()` helper — `JSONB` columns return native dicts/lists; callers use `r["col"] or []` for None-normalization.
+  - [x] Translate every `CREATE TABLE IF NOT EXISTS` in `init_db()`: `INTEGER PRIMARY KEY AUTOINCREMENT` → `BIGSERIAL PRIMARY KEY`, JSON-as-TEXT columns (`cognitive_labels`, `cognitive_triggers`, `social_interactions`, `tags`, `somatic_sensations`, `supplements`, `friction_points`) become `JSONB`, `day TEXT` stays as `TEXT`.
+  - [x] Drop the legacy-schema migration block + `_has_legacy_extraction_schema` helper — fresh start.
+  - [x] Drop the `goals` `ALTER TABLE` loop — `status`, `fulfilled_at`, `removed_at`, `source` are in the `CREATE TABLE`.
+  - [x] Add `close_pool()` and wire into `main.py`'s shutdown hook.
+- [x] **Placeholder + idiom translation across `app/extractions.py`, `app/goals.py`, `app/batch.py`, `app/day_messages.py`, `app/graph_maintenance.py`, `app/morning_brief.py`, `app/bot.py`, `app/parser.py`, every `app/routers/*.py`, both test files that hit the DB:**
+  - [x] `?` → `%s` (44 occurrences).
+  - [x] `INSERT … ON CONFLICT(day) DO UPDATE …` works verbatim in Postgres.
+  - [x] `date(m.created_at, '-6 hours')` (`app/graph_maintenance.py`, `app/day_messages.py`) replaced with `bucket_sql_expr()` helper in `app/time_buckets.py` that yields `(col::timestamp - INTERVAL 'N hours')::date`. The old `sqlite_bucket_modifier()` is gone.
+  - [x] `datetime('now')` defaults → `NOW()`.
+  - [x] `INSERT OR IGNORE` in `tests/test_morning_brief.py` → `INSERT ... ON CONFLICT (name) DO NOTHING`.
+  - [x] `cursor.lastrowid` → `INSERT ... RETURNING id` + `fetchone()["id"]` in `app/routers/conversations.py`, `app/routers/messages.py`, `app/morning_brief.py`, `app/bot.py`.
+  - [x] JSONB inserts use `%s::jsonb` casts on the placeholder; `json.dumps()` preserved on Python side. Lists/dicts come back natively on read.
+  - [x] `app/routers/admin.py::inspect_day` — removed dead `SELECT … FROM todos` query (table was dropped in earlier work; was about to throw "relation does not exist").
+  - [x] `app/scheduler.py` — removed dead `db.migration_ran` branch (legacy SQLite-only).
+  - [x] `app/goals.py` — removed stale `import sqlite3` + `sqlite3.Cursor` / `sqlite3.Row` type hints.
+  - [x] Dropped the FK on `morning_brief_log.conversation_id` — failure path writes 0 there, matches original SQLite behavior (SQLite never enforced FKs by default).
+- [x] **Local Postgres for dev:** using the existing Homebrew Postgres 14 (no Supabase CLI needed for Phase 1 — auth.users gets introduced in Phase 2). Created database `mindforge_dev`; `DATABASE_URL=postgresql://localhost:5432/mindforge_dev`.
+- [x] **Tests:** `tests/conftest.py` — session-scoped pool + per-test TRUNCATE of every table. Simpler than per-test schemas, doesn't blow up Postgres' connection cap, equivalent isolation. **All 45 tests pass** (the 4 pre-existing goals-lifecycle failures from Phase 0 are fixed by this fixture).
 
-**Verify:** `pytest -q` green; `python main.py` boots; chat one message in the browser, hit `POST /api/admin/parse-day/<today>`, confirm the row appears via `psql` and `/api/dashboard` returns it.
+**Verification (2026-05-31):**
+- `pytest -q`: **45 passed**.
+- `uvicorn main:app` boots cleanly; `GET /api/dashboard` returns empty structure; `POST /api/conversations` returns `{"id": 1, ...}` (confirming `RETURNING id` round-trip works); `GET /api/conversations` lists the row back.
 
 ### Phase 2 — Multi-tenant data model (Postgres + Neo4j)  ⬜
 

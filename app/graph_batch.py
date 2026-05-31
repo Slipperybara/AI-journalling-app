@@ -2,7 +2,7 @@
 import hashlib
 from datetime import date, timedelta
 
-from .db import connect, loads
+from .db import connect
 from .graph_db import graph_connect
 
 
@@ -16,7 +16,7 @@ def write_day(day: str) -> dict:
     idempotent primitives that the reconciliation pass also reuses."""
     with connect() as conn:
         log_row = conn.execute(
-            "SELECT status FROM parse_log WHERE day = ?", (day,)
+            "SELECT status FROM parse_log WHERE day = %s", (day,)
         ).fetchone()
 
     if not log_row or log_row["status"] != "succeeded":
@@ -44,22 +44,22 @@ def sync_day_to_graph(day: str) -> dict:
     """
     with connect() as conn:
         emotion = conn.execute(
-            "SELECT * FROM emotional_analysis WHERE day = ?", (day,)
+            "SELECT * FROM emotional_analysis WHERE day = %s", (day,)
         ).fetchone()
         health = conn.execute(
-            "SELECT * FROM health_metrics WHERE day = ?", (day,)
+            "SELECT * FROM health_metrics WHERE day = %s", (day,)
         ).fetchone()
         productivity = conn.execute(
-            "SELECT * FROM productivity_metrics WHERE day = ?", (day,)
+            "SELECT * FROM productivity_metrics WHERE day = %s", (day,)
         ).fetchone()
         events = conn.execute(
-            "SELECT * FROM events WHERE day = ?", (day,)
+            "SELECT * FROM events WHERE day = %s", (day,)
         ).fetchall()
         topic_rows = conn.execute(
-            "SELECT event_title, topic FROM event_topics WHERE day = ?", (day,)
+            "SELECT event_title, topic FROM event_topics WHERE day = %s", (day,)
         ).fetchall()
         goal_rows = conn.execute(
-            "SELECT event_title, goal_name FROM event_goal_contributions WHERE day = ?", (day,)
+            "SELECT event_title, goal_name FROM event_goal_contributions WHERE day = %s", (day,)
         ).fetchall()
         goals = conn.execute(
             "SELECT name, discovered_on, status, fulfilled_at FROM goals "
@@ -154,7 +154,7 @@ def _write_day_node(session, day: str, productivity) -> None:
         shallow_work_hours=productivity["shallow_work_hours"] if productivity else None,
         time_block_adherence=productivity["time_block_adherence"] if productivity else None,
         cognitive_load=productivity["cognitive_load"] if productivity else None,
-        friction_points=loads(productivity["friction_points"]) if productivity else [],
+        friction_points=(productivity["friction_points"] or []) if productivity else [],
     )
 
 
@@ -184,9 +184,9 @@ def _write_emotion(session, day: str, emotion) -> None:
             quadrant=emotion["primary_quadrant"],
             valence=emotion["valence"],
             arousal=emotion["arousal"],
-            labels=loads(emotion["cognitive_labels"]),
-            triggers=loads(emotion["cognitive_triggers"]),
-            social=loads(emotion["social_interactions"]),
+            labels=(emotion["cognitive_labels"] or []),
+            triggers=(emotion["cognitive_triggers"] or []),
+            social=(emotion["social_interactions"] or []),
         )
         tx.commit()
 
@@ -207,9 +207,9 @@ def _write_health(session, day: str, health) -> None:
     """
     params = dict(
         day=day,
-        somatic=loads(health["somatic_sensations"]),
+        somatic=(health["somatic_sensations"] or []),
         performance=health["physical_performance"],
-        supplements=loads(health["supplements"]),
+        supplements=(health["supplements"] or []),
     )
 
     if sleep:

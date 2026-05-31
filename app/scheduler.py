@@ -11,12 +11,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from . import db
-from .batch import (
-    backfill_all_message_days,
-    catch_up_parses,
-    run_scheduled_batch,
-)
+from .batch import catch_up_parses, run_scheduled_batch
 from .core import settings
 
 
@@ -24,9 +19,6 @@ _scheduler = BackgroundScheduler()
 
 
 def _startup_parses() -> None:
-    if db.migration_ran:
-        count = backfill_all_message_days()
-        print(f"[scheduler] backfill complete: {count} day(s)")
     catch_up_parses()
 
 

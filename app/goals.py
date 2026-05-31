@@ -11,7 +11,6 @@ Cap policy: at most `settings.max_active_goals` goals may have status='active'.
 Adds while at cap raise `GoalCapReachedError` — the caller (chat tool / slash
 command / API endpoint) surfaces a clear "fulfill or remove one first" message.
 """
-import sqlite3
 from datetime import datetime
 from typing import Optional
 
@@ -36,12 +35,12 @@ class GoalCapReachedError(Exception):
     """Raised when add or rename would push active goal count above the cap."""
 
 
-def _count_active(cursor: sqlite3.Cursor) -> int:
+def _count_active(cursor) -> int:
     cursor.execute("SELECT COUNT(*) AS n FROM goals WHERE status='active'")
     return cursor.fetchone()["n"]
 
 
-def _row_dict(row: sqlite3.Row) -> dict:
+def _row_dict(row) -> dict:
     return dict(row) if row is not None else None
 
 
@@ -51,7 +50,7 @@ def list_goals(status: Optional[str] = None) -> list[dict]:
     with connect() as conn:
         if status:
             rows = conn.execute(
-                "SELECT * FROM goals WHERE status = ? ORDER BY created_at DESC",
+                "SELECT * FROM goals WHERE status = %s ORDER BY created_at DESC",
                 (status,),
             ).fetchall()
         else:
@@ -61,10 +60,10 @@ def list_goals(status: Optional[str] = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _fetch_row(name: str) -> Optional[sqlite3.Row]:
+def _fetch_row(name: str) -> Optional[dict]:
     with connect() as conn:
         return conn.execute(
-            "SELECT * FROM goals WHERE name = ?", (name,)
+            "SELECT * FROM goals WHERE name = %s", (name,)
         ).fetchone()
 
 
@@ -81,7 +80,7 @@ def add_user_goal(name: str) -> dict:
     with connect() as conn:
         cursor = conn.cursor()
         existing = cursor.execute(
-            "SELECT * FROM goals WHERE name = ?", (name,)
+            "SELECT * FROM goals WHERE name = %s", (name,)
         ).fetchone()
 
         if existing is not None and existing["status"] != "removed":
@@ -96,7 +95,7 @@ def add_user_goal(name: str) -> dict:
                 """
                 UPDATE goals
                 SET status = 'active', source = 'user', removed_at = NULL
-                WHERE name = ?
+                WHERE name = %s
                 """,
                 (name,),
             )
@@ -104,7 +103,7 @@ def add_user_goal(name: str) -> dict:
             cursor.execute(
                 """
                 INSERT INTO goals (name, discovered_on, status, source)
-                VALUES (?, ?, 'active', 'user')
+                VALUES (%s, %s, 'active', 'user')
                 """,
                 (name, today),
             )
@@ -120,8 +119,8 @@ def mark_fulfilled(name: str) -> dict:
         cursor.execute(
             """
             UPDATE goals
-            SET status = 'fulfilled', fulfilled_at = ?
-            WHERE name = ? AND status = 'active'
+            SET status = 'fulfilled', fulfilled_at = %s
+            WHERE name = %s AND status = 'active'
             """,
             (now, name),
         )
@@ -139,8 +138,8 @@ def mark_removed(name: str) -> dict:
         cursor.execute(
             """
             UPDATE goals
-            SET status = 'removed', removed_at = ?
-            WHERE name = ? AND status IN ('active','fulfilled')
+            SET status = 'removed', removed_at = %s
+            WHERE name = %s AND status IN ('active','fulfilled')
             """,
             (now, name),
         )
@@ -166,24 +165,24 @@ def rename_goal(old_name: str, new_name: str) -> dict:
     with connect() as conn:
         cursor = conn.cursor()
         old_row = cursor.execute(
-            "SELECT * FROM goals WHERE name = ? AND status IN ('active','fulfilled')",
+            "SELECT * FROM goals WHERE name = %s AND status IN ('active','fulfilled')",
             (old_name,),
         ).fetchone()
         if old_row is None:
             raise GoalNotFoundError(old_name)
         collision = cursor.execute(
-            "SELECT name FROM goals WHERE name = ? AND status IN ('active','fulfilled')",
+            "SELECT name FROM goals WHERE name = %s AND status IN ('active','fulfilled')",
             (new_name,),
         ).fetchone()
         if collision is not None:
             raise GoalExistsError(new_name)
 
         cursor.execute(
-            "UPDATE goals SET name = ? WHERE name = ?",
+            "UPDATE goals SET name = %s WHERE name = %s",
             (new_name, old_name),
         )
         cursor.execute(
-            "UPDATE event_goal_contributions SET goal_name = ? WHERE goal_name = ?",
+            "UPDATE event_goal_contributions SET goal_name = %s WHERE goal_name = %s",
             (new_name, old_name),
         )
 

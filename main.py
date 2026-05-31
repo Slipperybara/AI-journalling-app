@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import scheduler
 from app.core import settings
-from app.db import init_db
+from app.db import close_pool, init_db
 from app.graph_db import close as graph_close, init_graph
 from app.routers import admin, conversations, dashboard, goals, messages
 
@@ -40,6 +40,7 @@ def _startup() -> None:
 def _shutdown() -> None:
     scheduler.stop()
     graph_close()
+    close_pool()
 
 
 if __name__ == "__main__":

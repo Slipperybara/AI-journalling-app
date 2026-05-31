@@ -43,7 +43,9 @@ def reconcile_extractions_and_chain() -> dict:
     """
     from . import graph_batch
     from .db import connect
+    from .time_buckets import bucket_sql_expr
 
+    bucket_expr = bucket_sql_expr("m.created_at")
     with connect() as conn:
         sqlite_days = {
             r["day"] for r in conn.execute("SELECT day FROM parse_log").fetchall()
@@ -51,7 +53,7 @@ def reconcile_extractions_and_chain() -> dict:
         msg_days = {
             r["day"]
             for r in conn.execute(
-                "SELECT DISTINCT date(m.created_at, '-6 hours') AS day "
+                f"SELECT DISTINCT {bucket_expr}::text AS day "
                 "FROM messages m WHERE m.role = 'user'"
             ).fetchall()
         }

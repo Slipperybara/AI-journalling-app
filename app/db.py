@@ -1,43 +1,48 @@
-"""SQLite schema bootstrap + small DB-shaped helpers.
+"""Postgres schema bootstrap + connection pooling.
 
-All DB access in this app uses raw `sqlite3` with `conn.row_factory = sqlite3.Row`.
-No ORM. `init_db()` is idempotent. If it detects drift from a previous schema
-(vestigial `message_id` column on extraction tables), it drops and recreates
-the extraction tables and clears `parse_log` so the batch can backfill.
+All DB access uses psycopg v3 via a process-wide ConnectionPool. Connections
+yield dict-like rows so callers can use `row["column"]` access. JSON-shaped
+columns are `JSONB` and return native Python dicts/lists (NULL columns return
+Python None — callers normalize with `r["col"] or []`).
 """
-import json
-import sqlite3
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Iterator
 
-from .core import DB_NAME
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+from .core import settings
 
 
-# Set to True by `init_db()` when the one-shot extraction-table cleanup runs,
-# so the scheduler can trigger a backfill across every day with messages.
-migration_ran = False
+_pool: ConnectionPool | None = None
+
+
+def _get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ConnectionPool(
+            settings.database_url,
+            min_size=1,
+            max_size=4,
+            kwargs={"row_factory": dict_row},
+        )
+    return _pool
 
 
 @contextmanager
-def connect() -> Iterator[sqlite3.Connection]:
-    """Yield a sqlite3 connection with Row factory enabled. Commits on exit."""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    try:
+def connect() -> Iterator[psycopg.Connection]:
+    """Yield a pooled psycopg connection. Commits on context exit, rolls back on exception."""
+    with _get_pool().connection() as conn:
         yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 
-def loads(s: Any) -> list:
-    """JSON-decode a stored list field, tolerating None / bad data."""
-    if not s:
-        return []
-    try:
-        return json.loads(s)
-    except Exception:
-        return []
+def close_pool() -> None:
+    """Drain and close the process-wide pool. Call from FastAPI's shutdown hook."""
+    global _pool
+    if _pool is not None:
+        _pool.close()
+        _pool = None
 
 
 EXTRACTION_TABLES = (
@@ -52,37 +57,24 @@ EXTRACTION_TABLES = (
 # commands and must survive day re-parses.
 
 
-def _has_legacy_extraction_schema(cursor: sqlite3.Cursor) -> bool:
-    """Detect the pre-day-keyed schema: extraction tables carry a vestigial
-    `message_id` column from when each message was parsed inline."""
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='emotional_analysis'")
-    if not cursor.fetchone():
-        return False
-    cursor.execute("PRAGMA table_info(emotional_analysis)")
-    return any(r[1] == "message_id" for r in cursor.fetchall())
-
-
 def init_db() -> None:
-    global migration_ran
-
     with connect() as conn:
         cursor = conn.cursor()
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 started_at TEXT NOT NULL
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id INTEGER NOT NULL,
+                id BIGSERIAL PRIMARY KEY,
+                conversation_id BIGINT NOT NULL REFERENCES conversations(id),
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+                created_at TEXT NOT NULL
             )
         """)
 
@@ -95,80 +87,68 @@ def init_db() -> None:
             )
         """)
 
-        # Tracks per-day morning brief posting so cron + catch-up + admin
-        # re-triggers stay idempotent.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS morning_brief_log (
                 day TEXT PRIMARY KEY,
                 posted_at TEXT NOT NULL,
-                conversation_id INTEGER NOT NULL,
+                conversation_id BIGINT NOT NULL,
                 status TEXT NOT NULL,
                 error TEXT
             )
         """)
 
-        if _has_legacy_extraction_schema(cursor):
-            for t in EXTRACTION_TABLES:
-                cursor.execute(f"DROP TABLE IF EXISTS {t}")
-            cursor.execute("DELETE FROM parse_log")
-            migration_ran = True
-            print("[db] migrated extraction tables to day-keyed schema; backfill will run")
-
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 valence REAL,
                 arousal REAL,
                 primary_quadrant TEXT,
-                cognitive_labels TEXT,
-                cognitive_triggers TEXT,
-                social_interactions TEXT
+                cognitive_labels JSONB,
+                cognitive_triggers JSONB,
+                social_interactions JSONB
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS health_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 sleep_quality TEXT,
                 exercise_type TEXT,
                 diet_quality TEXT,
-                somatic_sensations TEXT,
+                somatic_sensations JSONB,
                 physical_performance TEXT,
-                supplements TEXT
+                supplements JSONB
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS productivity_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 deep_work_hours REAL,
                 shallow_work_hours REAL,
                 time_block_adherence TEXT,
                 cognitive_load TEXT,
-                friction_points TEXT
+                friction_points JSONB
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 title TEXT,
                 description TEXT,
-                tags TEXT,
+                tags JSONB,
                 event_type TEXT
             )
         """)
 
-        # TODOs are gone — the table is dropped if present from a prior schema.
-        cursor.execute("DROP TABLE IF EXISTS todos")
-
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS event_topics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 event_title TEXT NOT NULL,
                 topic TEXT NOT NULL
@@ -177,7 +157,7 @@ def init_db() -> None:
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS event_goal_contributions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id BIGSERIAL PRIMARY KEY,
                 day TEXT NOT NULL,
                 event_title TEXT NOT NULL,
                 goal_name TEXT NOT NULL
@@ -188,20 +168,12 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS goals (
                 name TEXT PRIMARY KEY,
                 discovered_on TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMP DEFAULT NOW(),
+                status TEXT NOT NULL DEFAULT 'active',
+                fulfilled_at TEXT,
+                removed_at TEXT,
+                source TEXT NOT NULL DEFAULT 'agent'
             )
         """)
-
-        # Goals lifecycle migration: add status, lifecycle timestamps, and source.
-        # Legal status values: active | fulfilled | removed | candidate.
-        for col, definition in [
-            ("status", "TEXT NOT NULL DEFAULT 'active'"),
-            ("fulfilled_at", "TEXT"),
-            ("removed_at", "TEXT"),
-            ("source", "TEXT NOT NULL DEFAULT 'agent'"),
-        ]:
-            cursor.execute("PRAGMA table_info(goals)")
-            if not any(r[1] == col for r in cursor.fetchall()):
-                cursor.execute(f"ALTER TABLE goals ADD COLUMN {col} {definition}")
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)")

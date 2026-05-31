@@ -21,7 +21,7 @@ from typing import List, Optional
 
 from .core import client
 from .day_messages import get_messages_for_day
-from .db import connect, loads
+from .db import connect
 from .time_buckets import bucket_for
 
 
@@ -186,7 +186,7 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
             SELECT day, valence, arousal, primary_quadrant,
                    cognitive_labels, cognitive_triggers, social_interactions
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= ? AND day < ?
+            WHERE day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
         """, (recent_cutoff, today_iso))
         for r in cursor.fetchall():
@@ -195,16 +195,16 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
                 "valence": r["valence"],
                 "arousal": r["arousal"],
                 "primary_quadrant": r["primary_quadrant"],
-                "cognitive_labels": loads(r["cognitive_labels"]),
-                "cognitive_triggers": loads(r["cognitive_triggers"]),
-                "social_interactions": loads(r["social_interactions"]),
+                "cognitive_labels": (r["cognitive_labels"] or []),
+                "cognitive_triggers": (r["cognitive_triggers"] or []),
+                "social_interactions": (r["social_interactions"] or []),
             })
 
         cursor.execute("""
             SELECT day, sleep_quality, exercise_type, diet_quality,
                    somatic_sensations, physical_performance, supplements
             FROM health_metrics
-            WHERE day IS NOT NULL AND day >= ? AND day < ?
+            WHERE day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
         """, (recent_cutoff, today_iso))
         for r in cursor.fetchall():
@@ -213,16 +213,16 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
                 "sleep_quality": r["sleep_quality"],
                 "exercise_type": r["exercise_type"],
                 "diet_quality": r["diet_quality"],
-                "somatic_sensations": loads(r["somatic_sensations"]),
+                "somatic_sensations": (r["somatic_sensations"] or []),
                 "physical_performance": r["physical_performance"],
-                "supplements": loads(r["supplements"]),
+                "supplements": (r["supplements"] or []),
             })
 
         cursor.execute("""
             SELECT day, deep_work_hours, shallow_work_hours,
                    time_block_adherence, cognitive_load, friction_points
             FROM productivity_metrics
-            WHERE day IS NOT NULL AND day >= ? AND day < ?
+            WHERE day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
         """, (recent_cutoff, today_iso))
         for r in cursor.fetchall():
@@ -232,13 +232,13 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
                 "shallow_work_hours": r["shallow_work_hours"],
                 "time_block_adherence": r["time_block_adherence"],
                 "cognitive_load": r["cognitive_load"],
-                "friction_points": loads(r["friction_points"]),
+                "friction_points": (r["friction_points"] or []),
             })
 
         cursor.execute("""
             SELECT day, title, description, tags, event_type
             FROM events
-            WHERE day IS NOT NULL AND day >= ? AND day < ?
+            WHERE day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC, id DESC
         """, (recent_cutoff, today_iso))
         recent_days["events"] = [dict(r) for r in cursor.fetchall()]
@@ -246,7 +246,7 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         cursor.execute("""
             SELECT AVG(valence) v, AVG(arousal) a, COUNT(*) n
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
         """, (seven_back,))
         row = cursor.fetchone()
         summary["emotional_7day"] = {
@@ -258,7 +258,7 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         cursor.execute("""
             SELECT primary_quadrant q, COUNT(*) n
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             GROUP BY primary_quadrant
         """, (seven_back,))
         summary["quadrant_counts_7day"] = {r["q"]: r["n"] for r in cursor.fetchall() if r["q"]}
@@ -266,7 +266,7 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         cursor.execute("""
             SELECT event_type, COUNT(*) n
             FROM events
-            WHERE day IS NOT NULL AND day >= ?
+            WHERE day IS NOT NULL AND day >= %s
             GROUP BY event_type
         """, (seven_back,))
         summary["events_7day"] = {r["event_type"]: r["n"] for r in cursor.fetchall() if r["event_type"]}
@@ -287,7 +287,7 @@ def fetch_chat_history(conversation_id: int, limit: int = 30) -> List[dict]:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT role, content FROM messages
-            WHERE conversation_id = ?
+            WHERE conversation_id = %s
             ORDER BY id ASC
         """, (conversation_id,))
         rows = [dict(r) for r in cursor.fetchall()]
@@ -501,9 +501,10 @@ def store_assistant_message(conversation_id: int, content: str) -> int:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO messages (conversation_id, role, content, created_at)
-            VALUES (?, 'assistant', ?, ?)
+            VALUES (%s, 'assistant', %s, %s)
+            RETURNING id
         """, (conversation_id, content, created_at))
-        return cursor.lastrowid
+        return cursor.fetchone()["id"]
 
 
 def process_message_background(conversation_id: int, message_content: str) -> None:
