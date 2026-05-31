@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "mindforge"
     max_active_goals: int = 3
+    cors_origins: str = "http://localhost:5173"
 
     class Config:
         env_file = ".env"
