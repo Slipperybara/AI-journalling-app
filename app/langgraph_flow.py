@@ -1,18 +1,20 @@
 """LangGraph orchestration: routes each user message to the journaling bot
-or the analytical Cypher pipeline, then writes the final reply to SQLite.
+or the analytical Cypher pipeline, then writes the final reply to Postgres.
 
-Analytical path: router -> cypher_agent -> db_executor -> (self-correct loop)
--> evaluator -> (re-query loop) -> synthesizer. The synthesizer digests the
-Neo4j records into a factual summary, then hands off to generate_bot_reply
-so the user-facing reply keeps the bot's voice.
+Analytical path: router -> cypher_agent -> validator (user_id scoping) ->
+db_executor -> (self-correct loop) -> evaluator -> (re-query loop) ->
+synthesizer. The synthesizer digests the Neo4j records into a factual
+summary, then hands off to generate_bot_reply so the user-facing reply
+keeps the bot's voice.
 
-The cypher_agent + evaluator loop is ReAct-style: each iteration records an
-attempt {query, result_count, result_sample, eval_passed, eval_hint} into
-`search_history`, which the cypher_agent reads on its next pass so it can
-choose to broaden, pivot, refine, or deepen based on what it already tried.
+Phase 2 multi-tenant: `user_id` is in GraphState and threaded into every
+node — the bot calls receive it, and the Cypher executor passes `$user_id`
+as a parameter so the LLM-generated queries that reference `$user_id` (per
+the ONTOLOGY_SCHEMA contract) resolve correctly.
 """
 from operator import add
 from typing import Annotated, Any, TypedDict
+from uuid import UUID
 
 from langgraph.graph import END, StateGraph
 
@@ -21,23 +23,22 @@ from .agents.synthesizer import synthesize_response
 from .bot import generate_bot_reply, store_assistant_message
 from .core import client
 from .graph_db import graph_connect
+from .graph_schema import validate_user_id_scoping
 
 
 class GraphState(TypedDict):
     message: str
     conversation_id: int
+    user_id: str              # UUID string
     intent: str               # "journaling" | "analytical"
     sqlite_context: str       # synthesizer facts (legacy field name kept)
     cypher_query: str
     graph_result: Any         # list of dicts from Neo4j
     query_error: str          # empty string when no error
-    retry_count: int          # Cypher self-correction attempts (syntax)
+    retry_count: int          # Cypher self-correction attempts (syntax + scoping)
     eval_retry_count: int     # evaluation broadening attempts (semantic)
     eval_passed: bool
     eval_hint: str
-    # Append-reducer: each evaluator pass appends one entry of
-    # {query, result_count, result_sample, eval_passed, eval_hint}.
-    # The cypher_agent reads this on every iteration to decide its next move.
     search_history: Annotated[list, add]
     final_response: str
 
@@ -68,8 +69,9 @@ def _router_node(state: GraphState) -> dict:
 
 
 def _bot_node(state: GraphState) -> dict:
-    reply = generate_bot_reply(state["conversation_id"])
-    store_assistant_message(state["conversation_id"], reply)
+    uid = UUID(state["user_id"])
+    reply = generate_bot_reply(state["conversation_id"], uid)
+    store_assistant_message(state["conversation_id"], reply, uid)
     return {"final_response": reply}
 
 
@@ -82,9 +84,22 @@ def _cypher_agent_node(state: GraphState) -> dict:
 
 
 def _db_executor_node(state: GraphState) -> dict:
+    # Guardrail: every label pattern in the generated Cypher MUST scope by
+    # user_id. If the LLM forgot, surface it as a query_error so the
+    # self-correct loop rewrites the query.
+    scoping_error = validate_user_id_scoping(state["cypher_query"])
+    if scoping_error:
+        return {
+            "graph_result": [],
+            "query_error": scoping_error,
+            "retry_count": state.get("retry_count", 0) + 1,
+        }
     try:
         with graph_connect() as session:
-            result = session.run(state["cypher_query"])
+            result = session.run(
+                state["cypher_query"],
+                user_id=state["user_id"],
+            )
             records = [dict(r) for r in result]
         return {"graph_result": records, "query_error": ""}
     except Exception as exc:
@@ -122,17 +137,16 @@ def _evaluator_node(state: GraphState) -> dict:
 
 def _synthesizer_node(state: GraphState) -> dict:
     """Digest the graph result into facts, then hand off to the bot for the
-    user-facing reply. The synthesizer's output is internal context, never
-    written directly to the messages table — the bot integrates it under its
-    normal voice and priorities."""
+    user-facing reply."""
+    uid = UUID(state["user_id"])
     failed = bool(state.get("query_error")) and state.get("retry_count", 0) >= 3
     facts = synthesize_response(
         user_message=state["message"],
         graph_result=state.get("graph_result", []),
         failed=failed,
     )
-    reply = generate_bot_reply(state["conversation_id"], graph_synthesis=facts)
-    store_assistant_message(state["conversation_id"], reply)
+    reply = generate_bot_reply(state["conversation_id"], uid, graph_synthesis=facts)
+    store_assistant_message(state["conversation_id"], reply, uid)
     return {"final_response": reply, "sqlite_context": facts}
 
 
@@ -151,9 +165,6 @@ def _route_after_executor(state: GraphState) -> str:
 def _route_after_evaluator(state: GraphState) -> str:
     if state.get("eval_passed", True):
         return "synthesizer_node"
-    # Allow up to 3 broadening attempts after the initial evaluation,
-    # so the cypher_agent can try 4 distinct queries in total before falling
-    # through to the synthesizer with whatever data it has.
     if state.get("eval_retry_count", 0) < 3:
         return "cypher_agent_node"
     return "synthesizer_node"
@@ -190,12 +201,13 @@ _graph = _build_graph()
 
 # ── Public entrypoint ────────────────────────────────────────────────────────
 
-def process_message(conversation_id: int, message_content: str) -> None:
+def process_message(conversation_id: int, message_content: str, user_id: UUID) -> None:
     """Entrypoint called from bot.process_message_background().
     Routes the message and writes the assistant reply to the messages table."""
     initial_state: GraphState = {
         "message": message_content,
         "conversation_id": conversation_id,
+        "user_id": str(user_id),
         "intent": "",
         "sqlite_context": "",
         "cypher_query": "",

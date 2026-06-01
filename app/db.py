@@ -3,7 +3,13 @@
 All DB access uses psycopg v3 via a process-wide ConnectionPool. Connections
 yield dict-like rows so callers can use `row["column"]` access. JSON-shaped
 columns are `JSONB` and return native Python dicts/lists (NULL columns return
-Python None — callers normalize with `r["col"] or []`).
+Python None; callers normalize with `r["col"] or []`).
+
+Multi-tenant scoping (Phase 2): every domain table carries `user_id UUID
+NOT NULL`. No FK on local dev — in production, Supabase's `auth.users(id)`
+will be referenced via a migration applied separately so the schema stays
+portable. Every query is scoped by `user_id = %s` at the call site; row
+level security can be added on top later without changing app code.
 """
 from contextlib import contextmanager
 from typing import Iterator
@@ -64,42 +70,51 @@ def init_db() -> None:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 started_at TEXT NOT NULL
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, started_at DESC)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 conversation_id BIGINT NOT NULL REFERENCES conversations(id),
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user_created ON messages(user_id, created_at)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS parse_log (
-                day TEXT PRIMARY KEY,
+                user_id UUID NOT NULL,
+                day TEXT NOT NULL,
                 status TEXT NOT NULL,
                 parsed_at TEXT,
-                error TEXT
+                error TEXT,
+                PRIMARY KEY (user_id, day)
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS morning_brief_log (
-                day TEXT PRIMARY KEY,
+                user_id UUID NOT NULL,
+                day TEXT NOT NULL,
                 posted_at TEXT NOT NULL,
                 conversation_id BIGINT NOT NULL,
                 status TEXT NOT NULL,
-                error TEXT
+                error TEXT,
+                PRIMARY KEY (user_id, day)
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 valence REAL,
                 arousal REAL,
@@ -109,10 +124,12 @@ def init_db() -> None:
                 social_interactions JSONB
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_emotional_user_day ON emotional_analysis(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS health_metrics (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 sleep_quality TEXT,
                 exercise_type TEXT,
@@ -122,10 +139,12 @@ def init_db() -> None:
                 supplements JSONB
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_health_user_day ON health_metrics(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS productivity_metrics (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 deep_work_hours REAL,
                 shallow_work_hours REAL,
@@ -134,10 +153,12 @@ def init_db() -> None:
                 friction_points JSONB
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_productivity_user_day ON productivity_metrics(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 title TEXT,
                 description TEXT,
@@ -145,35 +166,41 @@ def init_db() -> None:
                 event_type TEXT
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_user_day ON events(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS event_topics (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 event_title TEXT NOT NULL,
                 topic TEXT NOT NULL
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_event_topics_user_day ON event_topics(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS event_goal_contributions (
                 id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
                 day TEXT NOT NULL,
                 event_title TEXT NOT NULL,
                 goal_name TEXT NOT NULL
             )
         """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_event_goal_user_day ON event_goal_contributions(user_id, day)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS goals (
-                name TEXT PRIMARY KEY,
+                user_id UUID NOT NULL,
+                name TEXT NOT NULL,
                 discovered_on TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW(),
                 status TEXT NOT NULL DEFAULT 'active',
                 fulfilled_at TEXT,
                 removed_at TEXT,
-                source TEXT NOT NULL DEFAULT 'agent'
+                source TEXT NOT NULL DEFAULT 'agent',
+                PRIMARY KEY (user_id, name)
             )
         """)
-
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_user_status ON goals(user_id, status)")

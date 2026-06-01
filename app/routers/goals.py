@@ -1,13 +1,17 @@
-"""CRUD endpoints for goals lifecycle.
+"""CRUD endpoints for goals lifecycle (multi-tenant).
 
 Path params are goal names (URL-encoded by the client). FastAPI URL-decodes
-them automatically. The cap of 3 active goals is enforced inside
-`app.goals` — this router only translates between HTTP and helper calls.
+them automatically. The cap of `settings.max_active_goals` per user is
+enforced inside `app.goals` — this router only translates HTTP to helper
+calls and pulls `user_id` from the auth dependency.
 """
-from fastapi import APIRouter, HTTPException, Query
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from .. import goals as goals_svc
+from ..auth import get_current_user_id
 from ..goals import (
     GoalCapReachedError,
     GoalExistsError,
@@ -28,19 +32,22 @@ class GoalRename(BaseModel):
 
 
 @router.get("")
-async def list_goals_endpoint(status: str | None = Query(default=None)):
+async def list_goals_endpoint(
+    status: str | None = Query(default=None),
+    user_id: UUID = Depends(get_current_user_id),
+):
     if status is not None and status not in VALID_STATUSES:
         raise HTTPException(
             status_code=400,
             detail=f"invalid status; must be one of {sorted(VALID_STATUSES)}",
         )
-    return goals_svc.list_goals(status=status)
+    return goals_svc.list_goals(user_id, status=status)
 
 
 @router.post("")
-async def create_goal(body: GoalCreate):
+async def create_goal(body: GoalCreate, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.add_user_goal(body.name)
+        return goals_svc.add_user_goal(body.name, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except GoalExistsError:
@@ -55,9 +62,9 @@ async def create_goal(body: GoalCreate):
 
 
 @router.patch("/{name}/fulfill")
-async def fulfill_goal(name: str):
+async def fulfill_goal(name: str, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.mark_fulfilled(name)
+        return goals_svc.mark_fulfilled(name, user_id)
     except GoalNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -66,9 +73,13 @@ async def fulfill_goal(name: str):
 
 
 @router.patch("/{name}/rename")
-async def rename_goal_endpoint(name: str, body: GoalRename):
+async def rename_goal_endpoint(
+    name: str,
+    body: GoalRename,
+    user_id: UUID = Depends(get_current_user_id),
+):
     try:
-        return goals_svc.rename_goal(name, body.new_name)
+        return goals_svc.rename_goal(name, body.new_name, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except GoalNotFoundError:
@@ -83,9 +94,9 @@ async def rename_goal_endpoint(name: str, body: GoalRename):
 
 
 @router.delete("/{name}")
-async def remove_goal(name: str):
+async def remove_goal(name: str, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.mark_removed(name)
+        return goals_svc.mark_removed(name, user_id)
     except GoalNotFoundError:
         raise HTTPException(
             status_code=404, detail=f"no goal named '{name}'"

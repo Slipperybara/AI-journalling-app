@@ -1,4 +1,6 @@
 """LLM-driven structured extraction over a day's chat messages."""
+from uuid import UUID
+
 from .core import client
 from .models import HealthMetrics, JournalParserResponse, ProductivityMetrics
 
@@ -31,11 +33,12 @@ def is_productivity_meaningful(p: ProductivityMetrics) -> bool:
     ])
 
 
-def parse_day_content(content: str) -> JournalParserResponse:
+def parse_day_content(content: str, user_id: UUID) -> JournalParserResponse:
     from .db import connect as db_connect
     with db_connect() as conn:
         rows = conn.execute(
-            "SELECT name FROM goals WHERE status = 'active' ORDER BY name"
+            "SELECT name FROM goals WHERE user_id = %s AND status = 'active' ORDER BY name",
+            (str(user_id),),
         ).fetchall()
     active_goals = [r["name"] for r in rows]
 

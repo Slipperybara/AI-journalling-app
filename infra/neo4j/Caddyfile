@@ -1,0 +1,30 @@
+# TLS termination + Bolt-over-WebSocket reverse proxy.
+#
+# Backend Render service connects via `neo4j+s://neo4j.yourdomain.com`. The
+# `+s` variant tells the driver to use the secure Bolt protocol over a TLS
+# connection. Caddy upgrades the WebSocket and tunnels the framed Bolt
+# traffic to the local Neo4j container on 7687.
+#
+# Caddy automatically obtains + renews a Let's Encrypt cert for the hostname
+# via the HTTP-01 challenge (port 80 must be reachable from the internet).
+
+{$NEO4J_HOSTNAME} {
+	# Bolt + Bolt-over-WebSocket on the default secure port.
+	reverse_proxy neo4j:7687 {
+		# Bolt is a binary protocol — disable Caddy's buffering for both
+		# directions so framing stays intact.
+		flush_interval -1
+	}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

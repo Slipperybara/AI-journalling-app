@@ -74,7 +74,7 @@ def synthesize_response(
                 "role": "user",
                 "content": (
                     f"User question: {user_message}\n\n"
-                    f"Graph data (first 30 records):\n{json.dumps(graph_result[:30], indent=2)}"
+                    f"Graph data (first 30 records):\n{json.dumps(graph_result[:30], indent=2, default=str)}"
                 ),
             },
         ],

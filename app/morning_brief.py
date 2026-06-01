@@ -1,18 +1,20 @@
-"""Morning brief generation and posting.
+"""Morning brief generation and posting (multi-tenant).
 
-Runs after the nightly batch (or via the admin endpoint). Creates a fresh
-conversation in today's bucket and inserts a warm assistant message that
-greets the user, summarizes yesterday, surfaces one notable 7-day pattern
-if any, lightly references active goals and pending todos, and offers one
-grounded suggestion — then ends with "How are you doing today?".
+Runs after the nightly batch (or via the admin endpoint) per user. Creates a
+fresh conversation in today's bucket for the user and inserts a warm assistant
+message that greets them, summarizes yesterday, surfaces one notable 7-day
+pattern if any, lightly references active goals, and offers one grounded
+suggestion — then ends with "How are you doing today?".
 
-Idempotent via `morning_brief_log` keyed on `day`. Cron, catch-up sweeps,
-and manual admin re-triggers all collapse into a single posting per day.
+Idempotent via `morning_brief_log` keyed on `(user_id, day)`. Cron, catch-up
+sweeps, and manual admin re-triggers all collapse into a single posting per
+user per day.
 """
 import json
 import traceback
 from datetime import datetime, timedelta
 from typing import Optional
+from uuid import UUID
 
 from . import goals as goals_svc
 from .bot import store_assistant_message
@@ -21,15 +23,16 @@ from .db import connect
 from .graph_db import graph_connect
 
 
-def post_morning_brief(day: str) -> dict:
+def post_morning_brief(day: str, user_id: UUID) -> dict:
     """Top-level entrypoint. Returns {status, day, conversation_id, error?}.
 
     Status values: 'posted', 'already_done', 'skipped_empty', 'failed'.
     """
+    uid = str(user_id)
     with connect() as conn:
         existing = conn.execute(
-            "SELECT day, status, conversation_id FROM morning_brief_log WHERE day = %s",
-            (day,),
+            "SELECT day, status, conversation_id FROM morning_brief_log WHERE user_id = %s AND day = %s",
+            (uid, day),
         ).fetchone()
     if existing is not None and existing["status"] in ("posted", "skipped_empty"):
         return {
@@ -39,16 +42,16 @@ def post_morning_brief(day: str) -> dict:
         }
 
     try:
-        context = _gather_context(day)
+        context = _gather_context(day, user_id)
     except Exception as exc:
         traceback.print_exc()
-        _log(day, status="failed", conversation_id=0, error=str(exc))
+        _log(day, status="failed", conversation_id=0, user_id=user_id, error=str(exc))
         return {"status": "failed", "day": day, "error": str(exc)}
 
     if context.get("is_brand_new_user"):
         brief = _generate_welcome_for_new_user()
-        conv_id = _post_to_conversation(brief, day)
-        _log(day, status="skipped_empty", conversation_id=conv_id)
+        conv_id = _post_to_conversation(brief, day, user_id)
+        _log(day, status="skipped_empty", conversation_id=conv_id, user_id=user_id)
         return {"status": "skipped_empty", "day": day, "conversation_id": conv_id}
 
     try:
@@ -56,70 +59,72 @@ def post_morning_brief(day: str) -> dict:
         brief = _generate_brief(context, pattern, is_sparse=context["is_sparse_yesterday"])
     except Exception as exc:
         traceback.print_exc()
-        _log(day, status="failed", conversation_id=0, error=str(exc))
+        _log(day, status="failed", conversation_id=0, user_id=user_id, error=str(exc))
         return {"status": "failed", "day": day, "error": str(exc)}
 
     try:
-        conv_id = _post_to_conversation(brief, day)
+        conv_id = _post_to_conversation(brief, day, user_id)
     except Exception as exc:
         traceback.print_exc()
-        _log(day, status="failed", conversation_id=0, error=str(exc))
+        _log(day, status="failed", conversation_id=0, user_id=user_id, error=str(exc))
         return {"status": "failed", "day": day, "error": str(exc)}
 
-    _log(day, status="posted", conversation_id=conv_id)
+    _log(day, status="posted", conversation_id=conv_id, user_id=user_id)
     return {"status": "posted", "day": day, "conversation_id": conv_id}
 
 
-def _gather_context(day: str) -> dict:
-    """Pulls everything the brief LLM needs: yesterday, last-7-days summary,
-    active goals + goal momentum, pending todos. Single-shot SQLite reads
+def _gather_context(day: str, user_id: UUID) -> dict:
+    """Pulls everything the brief LLM needs for one user: yesterday, last-7-
+    days summary, active goals + goal momentum. Single-shot Postgres reads
     plus one Neo4j Cypher for momentum counts."""
+    uid = str(user_id)
     yesterday = (datetime.fromisoformat(day).date() - timedelta(days=1)).isoformat()
     seven_back = (datetime.fromisoformat(day).date() - timedelta(days=7)).isoformat()
 
     with connect() as conn:
         parse_log = conn.execute(
-            "SELECT status FROM parse_log WHERE day = %s", (yesterday,)
+            "SELECT status FROM parse_log WHERE user_id = %s AND day = %s",
+            (uid, yesterday),
         ).fetchone()
 
         yest_emotion = conn.execute(
             "SELECT valence, arousal, primary_quadrant, cognitive_labels, "
-            "cognitive_triggers FROM emotional_analysis WHERE day = %s",
-            (yesterday,),
+            "cognitive_triggers FROM emotional_analysis WHERE user_id = %s AND day = %s",
+            (uid, yesterday),
         ).fetchone()
         yest_health = conn.execute(
             "SELECT sleep_quality, exercise_type, diet_quality, somatic_sensations, "
-            "physical_performance FROM health_metrics WHERE day = %s",
-            (yesterday,),
+            "physical_performance FROM health_metrics WHERE user_id = %s AND day = %s",
+            (uid, yesterday),
         ).fetchone()
         yest_productivity = conn.execute(
             "SELECT deep_work_hours, shallow_work_hours, cognitive_load, "
-            "friction_points FROM productivity_metrics WHERE day = %s",
-            (yesterday,),
+            "friction_points FROM productivity_metrics WHERE user_id = %s AND day = %s",
+            (uid, yesterday),
         ).fetchone()
         yest_events = conn.execute(
-            "SELECT title, description, event_type, tags FROM events WHERE day = %s",
-            (yesterday,),
+            "SELECT title, description, event_type, tags FROM events WHERE user_id = %s AND day = %s",
+            (uid, yesterday),
         ).fetchall()
 
         seven_emotion = conn.execute(
             "SELECT day, valence, arousal, primary_quadrant FROM emotional_analysis "
-            "WHERE day >= %s AND day < %s ORDER BY day",
-            (seven_back, day),
+            "WHERE user_id = %s AND day >= %s AND day < %s ORDER BY day",
+            (uid, seven_back, day),
         ).fetchall()
         seven_health = conn.execute(
             "SELECT day, sleep_quality, exercise_type, diet_quality FROM health_metrics "
-            "WHERE day >= %s AND day < %s ORDER BY day",
-            (seven_back, day),
+            "WHERE user_id = %s AND day >= %s AND day < %s ORDER BY day",
+            (uid, seven_back, day),
         ).fetchall()
         seven_productivity = conn.execute(
             "SELECT day, deep_work_hours, cognitive_load FROM productivity_metrics "
-            "WHERE day >= %s AND day < %s ORDER BY day",
-            (seven_back, day),
+            "WHERE user_id = %s AND day >= %s AND day < %s ORDER BY day",
+            (uid, seven_back, day),
         ).fetchall()
 
-    active_goals = [g["name"] for g in goals_svc.list_goals(status="active")]
-    goal_momentum = _fetch_goal_momentum(active_goals) if active_goals else {}
+    active_goals = [g["name"] for g in goals_svc.list_goals(user_id, status="active")]
+    goal_momentum = _fetch_goal_momentum(active_goals, user_id) if active_goals else {}
 
     yest_data_present = any([yest_emotion, yest_health, yest_productivity, yest_events])
     seven_data_present = any([seven_emotion, seven_health, seven_productivity])
@@ -157,23 +162,26 @@ def _row_or_none(row) -> Optional[dict]:
     return d
 
 
-def _fetch_goal_momentum(goal_names: list[str]) -> dict[str, int]:
-    """Counts CONTRIBUTES_TO events per active goal in the last 7 days."""
+def _fetch_goal_momentum(goal_names: list[str], user_id: UUID) -> dict[str, int]:
+    """Counts CONTRIBUTES_TO events per active goal in the last 7 days, scoped
+    to this user. Every label pattern in the Cypher carries `user_id` to
+    prevent traversal-through-shared-node leaks."""
     try:
         with graph_connect() as session:
             result = session.run(
                 """
-                MATCH (g:Goal)
+                MATCH (g:Goal {user_id: $user_id})
                 WHERE g.name IN $names AND g.status = 'active'
-                OPTIONAL MATCH (g)<-[:CONTRIBUTES_TO]-(e:Event)<-[:HAD_EVENT]-(d:Day)
+                OPTIONAL MATCH (g)<-[:CONTRIBUTES_TO]-(e:Event {user_id: $user_id})
+                              <-[:HAD_EVENT]-(d:Day {user_id: $user_id})
                 WHERE d.date >= date() - duration('P7D')
                 RETURN g.name AS name, count(e) AS n
                 """,
+                user_id=str(user_id),
                 names=goal_names,
             )
             return {r["name"]: r["n"] for r in result}
     except Exception:
-        # Neo4j down or other transient — momentum is optional context.
         return {name: 0 for name in goal_names}
 
 
@@ -282,31 +290,32 @@ def _generate_welcome_for_new_user() -> str:
     )
 
 
-def _post_to_conversation(brief_text: str, day: str) -> int:
-    """Creates a new conversation in today's bucket and inserts the brief as
-    an assistant message. Returns the new conversation_id."""
+def _post_to_conversation(brief_text: str, day: str, user_id: UUID) -> int:
+    """Creates a new conversation in today's bucket for this user and inserts
+    the brief as an assistant message. Returns the new conversation_id."""
     started_at = datetime.now().isoformat()
     with connect() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO conversations (started_at) VALUES (%s) RETURNING id", (started_at,)
+            "INSERT INTO conversations (user_id, started_at) VALUES (%s, %s) RETURNING id",
+            (str(user_id), started_at),
         )
         conv_id = cursor.fetchone()["id"]
-    store_assistant_message(conv_id, brief_text)
+    store_assistant_message(conv_id, brief_text, user_id)
     return conv_id
 
 
-def _log(day: str, status: str, conversation_id: int, error: Optional[str] = None) -> None:
+def _log(day: str, status: str, conversation_id: int, user_id: UUID, error: Optional[str] = None) -> None:
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO morning_brief_log (day, posted_at, conversation_id, status, error)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT(day) DO UPDATE SET
+            INSERT INTO morning_brief_log (user_id, day, posted_at, conversation_id, status, error)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, day) DO UPDATE SET
                 posted_at = excluded.posted_at,
                 conversation_id = excluded.conversation_id,
                 status = excluded.status,
                 error = excluded.error
             """,
-            (day, datetime.now().isoformat(), conversation_id, status, error),
+            (str(user_id), day, datetime.now().isoformat(), conversation_id, status, error),
         )

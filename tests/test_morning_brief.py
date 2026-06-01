@@ -1,17 +1,19 @@
-"""Tests for the morning brief job.
+"""Tests for the morning brief job (multi-tenant).
 
-OpenAI calls are mocked. SQLite is real (shared journal.db). Tests use a
-unique fake day in the far future and clean up everything they touch.
+OpenAI calls are mocked. Postgres is real but conftest TRUNCATEs between
+tests, so every test starts from a clean slate scoped to TEST_USER_ID.
 """
 import pytest
 from unittest.mock import MagicMock, patch
 
 from app.db import connect, init_db
+from tests.conftest import TEST_USER_ID
 
 
 TEST_DAY = "2099-01-01"
 TEST_YESTERDAY = "2098-12-31"
 TEST_SEED_DAYS = ["2098-12-29", "2098-12-30", "2098-12-31"]
+UID = str(TEST_USER_ID)
 
 
 def _make_openai_response(content: str):
@@ -24,38 +26,10 @@ def _make_openai_response(content: str):
     return resp
 
 
-def _cleanup():
-    with connect() as conn:
-        conv_rows = conn.execute(
-            "SELECT conversation_id FROM morning_brief_log WHERE day = %s",
-            (TEST_DAY,),
-        ).fetchall()
-        for r in conv_rows:
-            cid = r["conversation_id"]
-            if cid:
-                conn.execute("DELETE FROM messages WHERE conversation_id = %s", (cid,))
-                conn.execute("DELETE FROM conversations WHERE id = %s", (cid,))
-        conn.execute("DELETE FROM morning_brief_log WHERE day = %s", (TEST_DAY,))
-        for tbl in (
-            "emotional_analysis",
-            "health_metrics",
-            "productivity_metrics",
-            "events",
-            "event_topics",
-            "event_goal_contributions",
-        ):
-            for d in [TEST_YESTERDAY, *TEST_SEED_DAYS]:
-                conn.execute(f"DELETE FROM {tbl} WHERE day = %s", (d,))
-        for d in [TEST_YESTERDAY, *TEST_SEED_DAYS]:
-            conn.execute("DELETE FROM parse_log WHERE day = %s", (d,))
-
-
 @pytest.fixture(autouse=True)
-def setup_and_teardown():
+def setup_db_only():
     init_db()
-    _cleanup()
     yield
-    _cleanup()
 
 
 def _seed_yesterday_data():
@@ -64,20 +38,21 @@ def _seed_yesterday_data():
     with connect() as conn:
         for d in TEST_SEED_DAYS:
             conn.execute(
-                "INSERT INTO parse_log (day, status, parsed_at) VALUES (%s, 'succeeded', %s)",
-                (d, f"{d}T23:59:00"),
+                "INSERT INTO parse_log (user_id, day, status, parsed_at) "
+                "VALUES (%s, %s, 'succeeded', %s)",
+                (UID, d, f"{d}T23:59:00"),
             )
             conn.execute(
-                "INSERT INTO emotional_analysis (day, valence, arousal, primary_quadrant, "
+                "INSERT INTO emotional_analysis (user_id, day, valence, arousal, primary_quadrant, "
                 "cognitive_labels, cognitive_triggers, social_interactions) "
-                "VALUES (%s, 0.3, 0.5, 'Peak Performance', '[\"motivated\"]', '[]', '[]')",
-                (d,),
+                "VALUES (%s, %s, 0.3, 0.5, 'Peak Performance', '[\"motivated\"]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
+                (UID, d),
             )
             conn.execute(
-                "INSERT INTO health_metrics (day, sleep_quality, exercise_type, diet_quality, "
+                "INSERT INTO health_metrics (user_id, day, sleep_quality, exercise_type, diet_quality, "
                 "somatic_sensations, physical_performance, supplements) "
-                "VALUES (%s, 'Good', 'Light Cardio', 'Clean', '[]', null, '[]')",
-                (d,),
+                "VALUES (%s, %s, 'Good', 'Light Cardio', 'Clean', '[]'::jsonb, null, '[]'::jsonb)",
+                (UID, d),
             )
 
 
@@ -89,22 +64,22 @@ def test_post_brief_creates_conversation_and_message():
          patch.object(morning_brief, "_fetch_goal_momentum", return_value={}):
         mock_client.chat.completions.create.side_effect = [
             _make_openai_response("NONE"),  # _detect_pattern
-            _make_openai_response("Good morning. Yesterday felt steady. How are you doing today?"),  # _generate_brief
+            _make_openai_response("Good morning. Yesterday felt steady. How are you doing today?"),
         ]
-        result = morning_brief.post_morning_brief(TEST_DAY)
+        result = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
 
     assert result["status"] == "posted"
     assert isinstance(result["conversation_id"], int) and result["conversation_id"] > 0
 
     with connect() as conn:
         log = conn.execute(
-            "SELECT status, conversation_id FROM morning_brief_log WHERE day = %s",
-            (TEST_DAY,),
+            "SELECT status, conversation_id FROM morning_brief_log WHERE user_id = %s AND day = %s",
+            (UID, TEST_DAY),
         ).fetchone()
         assert log["status"] == "posted"
         msgs = conn.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = %s",
-            (log["conversation_id"],),
+            "SELECT role, content FROM messages WHERE user_id = %s AND conversation_id = %s",
+            (UID, log["conversation_id"]),
         ).fetchall()
     assert len(msgs) == 1
     assert msgs[0]["role"] == "assistant"
@@ -121,9 +96,8 @@ def test_idempotent_on_repeat_call():
             _make_openai_response("NONE"),
             _make_openai_response("Good morning. How are you doing today?"),
         ]
-        first = morning_brief.post_morning_brief(TEST_DAY)
-        # Second call: no LLM calls should fire — idempotency short-circuits early.
-        second = morning_brief.post_morning_brief(TEST_DAY)
+        first = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
+        second = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
 
     assert first["status"] == "posted"
     assert second["status"] == "already_done"
@@ -131,7 +105,8 @@ def test_idempotent_on_repeat_call():
 
     with connect() as conn:
         n = conn.execute(
-            "SELECT COUNT(*) AS n FROM morning_brief_log WHERE day = %s", (TEST_DAY,)
+            "SELECT COUNT(*) AS n FROM morning_brief_log WHERE user_id = %s AND day = %s",
+            (UID, TEST_DAY),
         ).fetchone()["n"]
     assert n == 1
 
@@ -142,47 +117,34 @@ def test_sparse_day_still_posts():
     from app import morning_brief
     with connect() as conn:
         conn.execute(
-            "INSERT INTO parse_log (day, status, parsed_at) VALUES (%s, 'empty', %s)",
-            (TEST_YESTERDAY, "2098-12-31T23:59:00"),
+            "INSERT INTO parse_log (user_id, day, status, parsed_at) VALUES (%s, %s, 'empty', %s)",
+            (UID, TEST_YESTERDAY, "2098-12-31T23:59:00"),
         )
-        # Seed at least one active goal so brand-new-user path doesn't trigger.
         conn.execute(
-            "INSERT INTO goals (name, discovered_on, status, source) "
-            "VALUES ('test-goal-keep-context', %s, 'active', 'user') "
-            "ON CONFLICT (name) DO NOTHING",
-            (TEST_YESTERDAY,),
+            "INSERT INTO goals (user_id, name, discovered_on, status, source) "
+            "VALUES (%s, 'test-goal-keep-context', %s, 'active', 'user') "
+            "ON CONFLICT (user_id, name) DO NOTHING",
+            (UID, TEST_YESTERDAY),
         )
 
-    try:
-        with patch.object(morning_brief, "client") as mock_client, \
-             patch.object(morning_brief, "_fetch_goal_momentum", return_value={"test-goal-keep-context": 0}):
-            mock_client.chat.completions.create.side_effect = [
-                _make_openai_response("Good morning. Yesterday was quiet. How are you doing today?"),
-            ]
-            result = morning_brief.post_morning_brief(TEST_DAY)
-        assert result["status"] == "posted"
-        # Only the brief LLM call; _detect_pattern was skipped because there's <3 days of data.
-        assert mock_client.chat.completions.create.call_count == 1
-    finally:
-        with connect() as conn:
-            conn.execute("DELETE FROM goals WHERE name = 'test-goal-keep-context'")
+    with patch.object(morning_brief, "client") as mock_client, \
+         patch.object(morning_brief, "_fetch_goal_momentum", return_value={"test-goal-keep-context": 0}):
+        mock_client.chat.completions.create.side_effect = [
+            _make_openai_response("Good morning. Yesterday was quiet. How are you doing today?"),
+        ]
+        result = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
+    assert result["status"] == "posted"
+    # Only the brief LLM call; _detect_pattern was skipped because there's <3 days of data.
+    assert mock_client.chat.completions.create.call_count == 1
 
 
 def test_brand_new_user_posts_welcome():
     from app import morning_brief
 
-    with connect() as conn:
-        existing_goal_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM goals WHERE status='active'"
-        ).fetchone()["n"]
-    if existing_goal_count > 0:
-        pytest.skip(
-            "Cannot run brand-new-user test against a populated journal.db"
-        )
-
+    # conftest TRUNCATEs before every test, so the goals table is empty here.
     with patch.object(morning_brief, "client") as mock_client, \
          patch.object(morning_brief, "_fetch_goal_momentum", return_value={}):
-        result = morning_brief.post_morning_brief(TEST_DAY)
+        result = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
 
     assert result["status"] == "skipped_empty"
     assert isinstance(result["conversation_id"], int)
@@ -197,15 +159,16 @@ def test_failure_logged_not_raised():
     with patch.object(morning_brief, "client") as mock_client, \
          patch.object(morning_brief, "_fetch_goal_momentum", return_value={}):
         mock_client.chat.completions.create.side_effect = Exception("LLM exploded")
-        result = morning_brief.post_morning_brief(TEST_DAY)
+        result = morning_brief.post_morning_brief(TEST_DAY, TEST_USER_ID)
 
     assert result["status"] == "failed"
     assert "LLM exploded" in result["error"]
 
     with connect() as conn:
         log = conn.execute(
-            "SELECT status, error, conversation_id FROM morning_brief_log WHERE day = %s",
-            (TEST_DAY,),
+            "SELECT status, error, conversation_id FROM morning_brief_log "
+            "WHERE user_id = %s AND day = %s",
+            (UID, TEST_DAY),
         ).fetchone()
     assert log["status"] == "failed"
     assert "LLM exploded" in log["error"]

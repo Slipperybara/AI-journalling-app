@@ -6,9 +6,9 @@
 |---|---|---|
 | **0** | Dependency & config hygiene | ✅ **Complete** (2026-05-31) |
 | **1** | Postgres migration (still single-user) | ✅ **Complete** (2026-05-31) |
-| **2** | Multi-tenant data model (Postgres + Neo4j) | ⬜ Pending |
-| **3** | Supabase Google OAuth | ⬜ Pending |
-| **4** | Deploy (Supabase + Hetzner + Render + Vercel) | ⬜ Pending |
+| **2** | Multi-tenant data model (Postgres + Neo4j) | ✅ **Complete** (2026-05-31) |
+| **3** | Supabase Google OAuth | ✅ **Complete** (2026-05-31, JWKS asymmetric mode) |
+| **4** | Deploy (Supabase + Hetzner + Render + Vercel) | ✅ **Code complete** (2026-06-01) — pending user-driven provisioning |
 
 ## Context
 
@@ -80,18 +80,18 @@ Replace SQLite end-to-end. App still works for one user, no multi-tenant changes
 - `pytest -q`: **45 passed**.
 - `uvicorn main:app` boots cleanly; `GET /api/dashboard` returns empty structure; `POST /api/conversations` returns `{"id": 1, ...}` (confirming `RETURNING id` round-trip works); `GET /api/conversations` lists the row back.
 
-### Phase 2 — Multi-tenant data model (Postgres + Neo4j)  ⬜
+### Phase 2 — Multi-tenant data model (Postgres + Neo4j)  ✅ Complete
 
 Every persisted thing now belongs to a user. App still uses a hardcoded `DEV_USER_ID` env var; real auth comes in phase 3.
 
 **Postgres:**
 
-- [ ] Use Supabase's built-in `auth.users` table as the canonical user registry. Do **not** create a parallel `users` table.
-- [ ] Add `user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE` to: `conversations`, `messages`, `parse_log`, `morning_brief_log`, `emotional_analysis`, `health_metrics`, `productivity_metrics`, `events`, `event_topics`, `event_goal_contributions`, `goals`.
-- [ ] Composite indexes on `(user_id, day)` for every day-keyed table.
-- [ ] Change `goals` primary key from `(name)` to `(user_id, name)`.
-- [ ] Change `parse_log` and `morning_brief_log` primary keys from `(day)` to `(user_id, day)`. Update the `ON CONFLICT` clause in `app/batch.py` to match.
-- [ ] All inserts include `user_id`; all reads have `WHERE user_id = %s` added. Touched files: `app/extractions.py`, `app/goals.py`, `app/batch.py`, `app/day_messages.py`, `app/morning_brief.py`, every `app/routers/*.py`.
+- [x] Local dev uses plain Postgres (no Supabase CLI yet). `user_id UUID NOT NULL` on every domain table, **no FK constraint** — in production the same column will reference Supabase's `auth.users(id)` via a migration applied at provisioning time. Documented in `app/db.py`.
+- [x] `user_id UUID NOT NULL` added to: `conversations`, `messages`, `parse_log`, `morning_brief_log`, `emotional_analysis`, `health_metrics`, `productivity_metrics`, `events`, `event_topics`, `event_goal_contributions`, `goals`.
+- [x] Composite indexes on `(user_id, day)` for every day-keyed table + `(user_id, status)` on goals + `(user_id, started_at)` on conversations + `(user_id, created_at)` on messages.
+- [x] `goals` primary key is now `(user_id, name)`.
+- [x] `parse_log` and `morning_brief_log` primary keys are now `(user_id, day)`; `ON CONFLICT (user_id, day) DO UPDATE` in `app/batch.py` and `app/morning_brief.py`.
+- [x] All inserts include `user_id`; all reads filter `WHERE user_id = %s`. Touched: `app/extractions.py`, `app/goals.py`, `app/batch.py`, `app/day_messages.py`, `app/morning_brief.py`, `app/bot.py`, `app/parser.py`, every `app/routers/*.py`.
 
 **Neo4j (`app/graph_schema.py`, `app/graph_batch.py`, `app/graph_maintenance.py`, `app/morning_brief.py`, `app/langgraph_flow.py`):**
 
@@ -99,56 +99,147 @@ Isolation strategy: **property-based scoping with composite indexes, applied to 
 
 **Why per-user reference nodes (instead of global shared ones):** if reference nodes were global, a query like `MATCH (es:EmotionState {user_id: $uid})-[:IN_QUADRANT]->(q:EmotionQuadrant)<-[:IN_QUADRANT]-(other:EmotionState) RETURN other` would traverse *through* the shared quadrant node and silently return another user's EmotionStates unless every pattern variable is also filtered. That discipline is impossible to enforce on LLM-generated Cypher in `app/langgraph_flow.py`. Duplicating reference nodes per user costs ~17 nodes per user (4 quadrants + 4 sleep + 5 exercise + 4 diet) which is trivial, and makes leakage structurally impossible.
 
-- [ ] Add composite indexes for every label that gets a `user_id`: `CREATE INDEX day_user IF NOT EXISTS FOR (d:Day) ON (d.user_id, d.day)`, same shape for Event/Topic/Goal/EmotionState/HealthState, and for every reference label (EmotionQuadrant/SleepQuality/ExerciseType/DietQuality/Category) `ON (n.user_id, n.label)` or equivalent natural key.
-- [ ] **Per-user reference-node seeding:** the existing one-shot seed in `app/graph_schema.py` (that creates the global 4 quadrants, 4 sleep, 5 exercise, 4 diet) becomes a `seed_reference_nodes_for_user(user_id)` helper. Call it the first time we ever write data for a user (idempotent `MERGE` keyed on `(user_id, label)`). For `Category` nodes that `graph_maintenance.py` creates dynamically via gpt-4o, just include `user_id` in the MERGE key — they get created lazily per user.
-- [ ] **Every `MERGE` must include `user_id` in the matching key.** This is non-negotiable: today `app/graph_batch.py` does things like `MERGE (e:Event {title: $title, day: $day})` — if two users have a "morning run" on the same day, MERGE silently collapses them into a shared node, corrupting isolation. Change every MERGE to `MERGE (e:Event {user_id: $uid, title: $title, day: $day})`. Audit every `MERGE` and `CREATE` in `app/graph_batch.py`, `app/graph_maintenance.py`, `app/goals.py` — including reference-node MERGEs.
-- [ ] Every read query takes `$user_id` as a parameter and filters by it on **every label pattern in the query**, not just one: `MATCH (es:EmotionState {user_id: $user_id})-[:IN_QUADRANT]->(q:EmotionQuadrant {user_id: $user_id})`. Because all reference nodes are also per-user, traversals through them stay inside the user's subgraph by construction.
-- [ ] Refactor: `app/graph_batch.py::write_day`, `app/graph_maintenance.py::run_maintenance` (dedup queries must scope by user_id — otherwise dedup compares user A's events to user B's), `app/morning_brief.py` rollup queries, `app/langgraph_flow.py` static queries.
-- [ ] **LangGraph guardrail (in `app/langgraph_flow.py`):** the schema description fed to the Cypher-generating LLM must explicitly state "every node — domain and reference — has a `user_id` property; every label pattern in the query MUST filter by `user_id = $user_id`". Add a post-generation validator that regex-checks the generated Cypher and rejects any query containing a label pattern (Day, Event, Topic, Goal, EmotionState, HealthState, EmotionQuadrant, SleepQuality, ExerciseType, DietQuality, Category) without an accompanying `user_id` filter — feed the rejection back into the self-correction loop (the LangGraph plan already supports up to 3 self-correction passes).
+- [x] Composite indexes on `(user_id, key)` added in `app/graph_db.py::init_graph` for every label: Day/EmotionState/EmotionQuadrant/HealthState/SleepQuality/ExerciseType/DietQuality/Event/Topic/Category/Goal.
+- [x] **Per-user reference-node seeding:** `app/graph_db.py::seed_reference_nodes_for_user(user_id)` — idempotent MERGE keyed on `(user_id, label)`. Called automatically from `graph_batch.write_day(day, user_id)` on first write. `Category` nodes created dynamically by `graph_maintenance.py` also include `user_id` in the MERGE key.
+- [x] **Every `MERGE` includes `user_id` in the matching key.** Audited every `MERGE` and `CREATE` in `app/graph_batch.py`, `app/graph_maintenance.py`, `app/goals.py`, `app/graph_db.py`. Two users with same-named events/goals/topics now produce distinct nodes (verified via the cross-user isolation test).
+- [x] Every read query takes `$user_id` and filters every label pattern: `MATCH (es:EmotionState {user_id: $user_id})-[:IN_QUADRANT]->(q:EmotionQuadrant {user_id: $user_id})`.
+- [x] Refactored: `app/graph_batch.py::write_day`, `app/graph_maintenance.py::run`, `app/morning_brief.py::_fetch_goal_momentum`, all of `app/langgraph_flow.py`.
+- [x] **LangGraph guardrail in `app/graph_schema.py::validate_user_id_scoping`:** regex-based validator that rejects any Cypher missing `user_id` on any user-scoped label pattern. Called by `app/langgraph_flow.py::_db_executor_node` before each query execution; errors flow into the existing self-correction loop. `ONTOLOGY_SCHEMA` now explicitly tells the LLM about the scoping rule.
 
 **App scaffolding:**
 
-- [ ] Add `dev_user_id: str | None = None` to `app/core.py::Settings`.
-- [ ] Add `app/auth.py` containing a `get_current_user_id` FastAPI dependency. In phase 2 it returns `UUID(settings.dev_user_id)`; in phase 3 it gets replaced with the JWT-verifying implementation.
-- [ ] Wire `user_id: UUID = Depends(get_current_user_id)` into every route in `app/routers/{conversations,messages,dashboard,goals}.py` and the non-webhook admin routes.
-- [ ] Update `app/batch.py::run_scheduled_batch` to iterate over all users (`SELECT id FROM auth.users`) and run `parse_day(yesterday, user_id)` for each.
+- [x] `dev_user_id: str = "00000000-0000-0000-0000-000000000001"` in `app/core.py::Settings`.
+- [x] `app/auth.py::get_current_user_id` — dev shim that returns `UUID(settings.dev_user_id)`. Phase 3 will replace the body with JWT verification; route signatures stay the same.
+- [x] `user_id: UUID = Depends(get_current_user_id)` on every route in `app/routers/{conversations,messages,dashboard,goals,admin}.py`.
+- [x] `app/batch.py::run_scheduled_batch` iterates over every distinct `user_id` from `messages` (via `app/day_messages.py::get_all_user_ids_with_messages`) — auth.users isn't required for local dev, the set is data-derived.
 
 **Tests:**
 
-- [ ] Update fixtures to create a test user_id and pass it through.
-- [ ] Add a cross-user isolation test: write data for two user_ids, assert every read scoped to one never returns the other's rows. Same for Neo4j.
+- [x] `tests/conftest.py` exposes `TEST_USER_ID` and `TEST_USER_ID_B` constants. Pins `settings.dev_user_id = TEST_USER_ID` for the session.
+- [x] Existing test files (`test_goals_lifecycle.py`, `test_morning_brief.py`, `test_bot_goal_tools.py`, `test_graph_write_pipeline.py`) updated to pass `TEST_USER_ID` through every call.
+- [x] New `tests/test_user_isolation.py` — 6 cross-user isolation tests: same-named goals stay separate, `list_goals` doesn't leak, Neo4j `Goal`/`Day` nodes keyed by user_id, `mark_removed` one user doesn't affect the other, `validate_user_id_scoping` rejects unscoped queries.
 
-**Verify:** with `DEV_USER_ID` set, the app behaves exactly as in phase 1. Insert a row manually with a different `user_id`, hit `/api/dashboard`, confirm only the configured user's data appears.
+**Verification (executed 2026-05-31):**
+- `pytest -q`: **51 passed** (45 Phase 1 + 6 new isolation tests).
+- Manual two-user smoke: started backend as default `DEV_USER_ID` (user A), created goal "Ship Phase 2"; restarted with `DEV_USER_ID=00000000-0000-0000-0000-000000000002` (user B), list-goals returned `[]`, list-conversations returned `[]`, added own "Ship Phase 2" — succeeded (no collision with A). `psql` confirmed two rows in `goals`, distinct user_ids.
+- Side benefit: **the Phase 1 slash-goal bug is fixed** — the goals.py rewrite for multi-tenant cleared whatever was broken.
 
-### Phase 3 — Supabase Google OAuth  ⬜
+### Phase 3 — Supabase Google OAuth  ✅ Code complete
 
-Real auth replaces the `DEV_USER_ID` hardcode.
+Real auth replaces the `DEV_USER_ID` hardcode. **Dev fallback preserved**: when `SUPABASE_JWT_SECRET` is empty, the dev shim still works — local dev never breaks while Supabase is being provisioned. Flipping the env var on switches the whole app to real auth in-place.
 
-**Supabase setup:**
+**Supabase setup (manual, user does this):**
 
-- [ ] In Supabase dashboard, enable Google OAuth provider; register a Google OAuth app in Google Cloud Console with redirect URI `https://<project>.supabase.co/auth/v1/callback`.
+- [ ] Provision Supabase project at supabase.com (Free tier).
+- [ ] In Authentication → Providers, enable Google. Paste a Google OAuth client ID + secret (see step below).
+- [ ] In Google Cloud Console, create OAuth 2.0 client (Web application). Authorized redirect URI: `https://<project>.supabase.co/auth/v1/callback`.
+- [ ] Copy `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET` from Supabase → Settings → API into `.env` (backend) and `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` into `journal-frontend/.env`.
 
-**Frontend (`journal-frontend/`):**
+**Frontend (`journal-frontend/`):** ✅
 
-- [ ] `npm i @supabase/supabase-js`.
-- [ ] New file `src/supabase.js`: initialize `createClient(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)`.
-- [ ] In `App.jsx`, add a `LoginScreen` component (a single "Sign in with Google" button calling `supabase.auth.signInWithOAuth({ provider: 'google' })`).
-- [ ] Subscribe to `supabase.auth.onAuthStateChange`. If no session → render `<LoginScreen />`; if session → render the existing chat/dashboard.
-- [ ] Centralize fetch: add a small `apiFetch(path, opts)` helper that grabs the current `session.access_token` and adds `Authorization: Bearer <token>`. Replace every direct `fetch(`${API}/…`)` in `App.jsx` with `apiFetch(…)`.
+- [x] `npm i @supabase/supabase-js` — installed.
+- [x] `src/supabase.js` — `createClient(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY)`; logs a warning when env vars are missing.
+- [x] `App.jsx::LoginScreen` — single "Sign in with Google" button calling `supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })`.
+- [x] Auth gating in `App()` — `useEffect` subscribes to `supabase.auth.onAuthStateChange`; early-return `<LoginScreen />` when `SUPABASE_CONFIGURED && !session`; falls through to the existing UI when authenticated. When Supabase is not configured (`VITE_SUPABASE_URL` empty), the gate is bypassed so the dev shim keeps working.
+- [x] `apiFetch(url, opts)` helper — grabs `supabase.auth.getSession()` and attaches `Authorization: Bearer <token>` when configured. Internal alias `_rawFetch` to the global so the helper isn't recursive.
+- [x] Every consumer `fetch(` call (16 sites across chat, dashboard, goals, inspector, eval) swapped to `apiFetch(`.
+- [x] Sidebar shows the signed-in email + a "Sign out" button when Supabase is configured.
 
-**Backend:**
+**Backend:** ✅
 
-- [ ] Rewrite `app/auth.py::get_current_user_id`: decode the Bearer token, verify against `SUPABASE_JWT_SECRET` using `python-jose` (HS256), check `exp`, return `UUID(payload['sub'])`.
-- [ ] Cache the JWKS / secret in module scope (Supabase rotates rarely).
-- [ ] Routes don't change — the dependency injection from phase 2 already gives every endpoint the right user_id.
+- [x] `app/auth.py::get_current_user_id` — three-mode verifier:
+  - **Asymmetric (JWKS, default for current Supabase projects on publishable + secret keys).** When `settings.supabase_url` is set, fetches `<project>/auth/v1/.well-known/jwks.json` once at first request and caches it; verifies ES256/RS256 with `aud="authenticated"`.
+  - **Symmetric HS256.** When only `settings.supabase_jwt_secret` is set (no `supabase_url`), verifies against the shared secret — legacy mode for older Supabase projects.
+  - **Dev fallback.** When neither is set, returns `settings.dev_user_id`.
+- [x] All paths raise 401 on missing/expired/tampered/wrong-aud/non-UUID-sub tokens. JWKS path additionally rejects tokens signed by a key not in the project's JWKS.
+- [x] `app/core.py::Settings` — added `supabase_url`, `supabase_jwt_secret` (both default to empty string so dev keeps working).
+- [x] `requirements.txt` pins `httpx>=0.28.0` (used by the JWKS fetch).
+- [x] Routes don't change — the `Depends(get_current_user_id)` plumbing from Phase 2 is untouched.
 
-**Tests:**
+**Tests:** ✅
 
-- [ ] Add tests with a fake-but-valid JWT signed by the same `SUPABASE_JWT_SECRET` to verify accept/reject paths.
+- [x] `tests/test_auth.py` — 14 tests. HS256 path (9): dev fallback, valid Bearer, missing/non-Bearer/expired/tampered/wrong-aud/missing-sub/non-UUID-sub. JWKS path (5): valid ES256 token accepted, expired/wrong-aud rejected, token signed by foreign key rejected, JWKS path takes precedence over HS256 when both configured. Test fixtures generate fresh P-256 keypairs and mock `_fetch_jwks` so no real HTTP call is made.
 
-**Verify:** open `npm run dev`, see the Google login screen, click, log in, see your own (empty) dashboard. Log in from an incognito window with a different Google account, see an independent empty dashboard. Send messages from each; neither sees the other.
+**Verification (executed 2026-05-31):**
+- `pytest -q`: **65 passed** (51 Phase 2 + 14 auth tests covering HS256 + JWKS + dev fallback).
+- `python -c "import main"` boots cleanly with neither `SUPABASE_URL` nor `SUPABASE_JWT_SECRET` set — dev fallback returns `dev_user_id`.
+- `npm run build` + `npm run lint`: clean. Bundle is now ~416 KB (vs 215 KB pre-Phase 3) due to the Supabase SDK + websocket runtime.
 
-### Phase 4 — Deploy  ⬜
+**Manual login round-trip — deferred until user provisions Supabase**: open `npm run dev`, see the Google login screen, click, log in, see own (empty) dashboard. Second Google account in an incognito window sees an independent empty dashboard.
+
+### Phase 4 — Deploy  ✅ Code complete (provisioning is the user's manual step)
+
+**Code shipped (2026-06-01):**
+
+- [x] `app/core.py::Settings` — added `batch_webhook_secret` (empty default → webhook refuses with 503), `run_inline_scheduler` (default `True` for local dev, set to `False` on Render).
+- [x] `app/scheduler.py::start` — early-returns when `run_inline_scheduler` is false. Print confirms the gate at boot.
+- [x] `app/routers/admin.py::run_batch_webhook` — `POST /api/admin/run-batch`. No user auth; HMAC-verifies `X-Webhook-Secret` with `hmac.compare_digest`. For every user from `get_all_user_ids_with_messages()`, runs the per-user pipeline (parse → graph write → maintenance → morning brief), capturing per-stage failures so one user's failure doesn't break the others. Returns a `{user_id: {parse, graph, maintenance, morning_brief}}` summary that the GitHub Actions log captures.
+- [x] `.github/workflows/nightly-batch.yml` — cron `0 6 * * *` UTC + `workflow_dispatch` for manual runs. POSTs `RENDER_URL/api/admin/run-batch` with the shared secret. Fails the workflow if HTTP status ≠ 200.
+- [x] `infra/neo4j/docker-compose.yml` — Neo4j Community 5.26 (+ APOC plugin) + Caddy reverse proxy. Heap/pagecache tuned for a 4 GB CX22. Only Caddy ports 80/443 exposed externally; 7687/7474 internal-only.
+- [x] `infra/neo4j/Caddyfile` — TLS termination + Bolt-over-WebSocket reverse proxy with binary-safe streaming (`flush_interval -1`). Auto-LE cert.
+- [x] `infra/neo4j/README.md` — provisioning runbook (Hetzner CX22 OR Oracle Cloud Free Tier ARM box).
+- [x] `app/graph_rebuild.py` — disaster recovery. `python -m app.graph_rebuild --user <uuid>` or `--all`. Drops user's subgraph, re-seeds reference nodes, replays every succeeded day, runs maintenance.
+- [x] `tests/test_run_batch_webhook.py` — 6 tests: 503 when secret unset, 401 for missing/wrong secret, 200 with correct secret + pipeline summary, 200 with empty user list, per-user failure isolation.
+
+**Full suite: 71 passed.**
+
+**Manual provisioning playbook — the user does this end-to-end:**
+
+1. **Supabase Postgres** (already provisioned in Phase 3). Get the connection string from Supabase → Database → Connection string → "Session pooler" (the `aws-…-pooler.supabase.com:5432` form). Schema is `CREATE TABLE IF NOT EXISTS` everywhere, so the first connect creates it via `init_db()` on app boot.
+
+2. **Neo4j VPS** — see `infra/neo4j/README.md` for the full runbook. TL;DR:
+   - Spin up Hetzner CX22 (~€5/mo) or Oracle Cloud Free Tier (free).
+   - Point a subdomain (e.g. `neo4j.yourdomain.com`) A record at the VPS.
+   - Open ports 22 / 80 / 443 in the firewall.
+   - `scp -r infra/neo4j root@<vps>:~/mindforge-neo4j/`
+   - Create `.env` next to the compose file with `NEO4J_HOSTNAME=…` and a strong `NEO4J_PASSWORD=$(openssl rand -hex 32)`.
+   - `docker compose up -d`. Wait for Caddy's LE cert.
+   - Note the URI `neo4j+s://neo4j.yourdomain.com` and the password.
+
+3. **Render web service** for the backend:
+   - New Web Service, point at the GitHub repo.
+   - Build command: `pip install -r requirements.txt`
+   - Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - Environment variables:
+     - `OPENAI_API_KEY` = your key
+     - `DATABASE_URL` = Supabase session pooler string
+     - `NEO4J_URI` = `neo4j+s://neo4j.yourdomain.com`
+     - `NEO4J_USER` = `neo4j`
+     - `NEO4J_PASSWORD` = the VPS one from step 2
+     - `SUPABASE_URL` = your Supabase project URL
+     - `BATCH_WEBHOOK_SECRET` = `$(openssl rand -hex 32)` (note it; reused below)
+     - `RUN_INLINE_SCHEDULER` = `false`
+     - `CORS_ORIGINS` = `https://<your-vercel-url>.vercel.app` (fill after step 4)
+   - Deploy. Note the Render service URL (e.g. `https://mindforge-api.onrender.com`).
+
+4. **Vercel project** for `journal-frontend/`:
+   - Import the GitHub repo; set the root directory to `journal-frontend`.
+   - Framework preset: Vite (auto-detected).
+   - Environment variables:
+     - `VITE_API_URL` = the Render URL from step 3
+     - `VITE_SUPABASE_URL` = your Supabase project URL
+     - `VITE_SUPABASE_ANON_KEY` = your Supabase publishable key
+   - Deploy. Note the Vercel URL.
+   - Go back to Render and set `CORS_ORIGINS` to the Vercel URL; redeploy.
+
+5. **GitHub repo secrets** for the cron:
+   - `Settings → Secrets and variables → Actions → New repository secret`
+   - `RENDER_URL` = the Render service URL from step 3
+   - `BATCH_WEBHOOK_SECRET` = same string set on Render in step 3
+   - Workflow runs nightly at 06:00 UTC automatically. Trigger manually via the Actions tab `Run workflow` button to smoke-test.
+
+6. **First-deploy verification**:
+   - Open the Vercel URL → Google login screen → log in.
+   - Send a chat message; check the Render service logs for no errors.
+   - Manually fire the workflow from GitHub Actions; check the run log for `users_processed: 1` and per-user `morning_brief: posted`.
+   - `psql "$DATABASE_URL" -c "SELECT day, status FROM morning_brief_log;"` shows today's row.
+   - Use `cypher-shell` from your laptop against `neo4j+s://neo4j.yourdomain.com` to confirm Day/Event/Topic nodes were created.
+
+**If you ever lose the Neo4j VPS:**
+```
+python -m app.graph_rebuild --all
+```
+(Run from the Render shell or any machine with the production env vars set.)
 
 Provision real infra and ship.
 

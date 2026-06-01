@@ -1,18 +1,25 @@
-"""Postgres test isolation.
+"""Postgres test isolation (Phase 2: per-user scoping).
 
-One pool for the whole session (so we don't blow up Postgres' connection cap),
-TRUNCATE every table before each test. Equivalent isolation to per-test
-schemas without the socket churn. This also fixes the 4 pre-existing
-goals-lifecycle test failures from Phase 0 — those broke because tests ran
-against the live DB with name-prefix cleanup; now every test starts empty.
+One pool for the whole session, TRUNCATE every table before each test so
+the per-test state is identical to a fresh-install DB. A constant
+`TEST_USER_ID` is exposed for tests to scope their fixture data to a
+single user; `TEST_USER_ID_B` is provided for cross-user isolation tests.
 
-Neo4j is still shared across the test session and cleaned up by the per-file
-fixtures that touch it (e.g. `tests/test_goals_lifecycle.py::_cleanup`).
-Phase 2 introduces per-user_id isolation in Neo4j too.
+Neo4j is still shared across the test session; tests that touch the graph
+should clean up their nodes themselves OR rely on the schema-isolation
+property (every node carries user_id, and TEST_USER_ID_B never reads
+TEST_USER_ID's data).
 """
+from uuid import UUID
+
 import pytest
 
 from app import db as db_module
+from app.core import settings
+
+
+TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+TEST_USER_ID_B = UUID("00000000-0000-0000-0000-000000000002")
 
 
 _TABLES_TO_RESET = (
@@ -32,6 +39,9 @@ _TABLES_TO_RESET = (
 
 @pytest.fixture(scope="session", autouse=True)
 def _initialize_db():
+    # Pin the dev_user_id to TEST_USER_ID so any code path that resolves
+    # the current user via the dev shim sees the test user.
+    settings.dev_user_id = str(TEST_USER_ID)
     db_module.init_db()
     yield
     db_module.close_pool()

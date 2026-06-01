@@ -3,3 +3,7 @@
 .env.*.local
 *.db
 *.db.bak
+__pycache__/
+*.pyc
+node_modules/
+journal-frontend/dist/

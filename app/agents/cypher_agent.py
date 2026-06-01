@@ -118,7 +118,7 @@ def evaluate_result(user_message: str, graph_result: list) -> dict:
                 "role": "user",
                 "content": (
                     f"User question: {user_message}\n\n"
-                    f"Query result (first 20 records):\n{json.dumps(graph_result[:20], indent=2)}\n\n"
+                    f"Query result (first 20 records):\n{json.dumps(graph_result[:20], indent=2, default=str)}\n\n"
                     "Does this result fully answer the question?"
                 ),
             },

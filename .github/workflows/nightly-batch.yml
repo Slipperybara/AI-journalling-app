@@ -1,0 +1,36 @@
+name: Nightly batch
+
+# Fires at 06:00 UTC every day. Hits the Render-hosted backend's
+# HMAC-protected batch webhook, which then iterates every user and runs
+# the per-user pipeline (parse yesterday → graph → maintenance → brief).
+#
+# Required repo secrets:
+#   RENDER_URL            — https://<your-service>.onrender.com
+#   BATCH_WEBHOOK_SECRET  — same string set as BATCH_WEBHOOK_SECRET on Render
+#
+# Manual runs are also allowed via the Actions UI (workflow_dispatch).
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: POST /api/admin/run-batch
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "X-Webhook-Secret: ${{ secrets.BATCH_WEBHOOK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.RENDER_URL }}/api/admin/run-batch")
+          body=$(echo "$response" | sed '$d')
+          status=$(echo "$response" | tail -n1)
+          echo "HTTP $status"
+          echo "$body" | head -c 4000
+          if [ "$status" != "200" ]; then
+            echo "batch webhook returned non-200" >&2
+            exit 1
+          fi

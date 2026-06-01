@@ -18,6 +18,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from typing import List, Optional
+from uuid import UUID
 
 from .core import client
 from .day_messages import get_messages_for_day
@@ -164,7 +165,8 @@ SUMMARY_7DAY:
 {graph_facts_block}"""
 
 
-def assemble_bot_context(now: Optional[datetime] = None) -> dict:
+def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
+    uid = str(user_id)
     now = now or datetime.now()
     today_iso = bucket_for(now).isoformat()
     recent_cutoff = (bucket_for(now) - timedelta(days=3)).isoformat()
@@ -179,16 +181,16 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
 
         today_transcript = [
             {"at": r["created_at"], "role": r["role"], "content": r["content"]}
-            for r in get_messages_for_day(today_iso)
+            for r in get_messages_for_day(today_iso, user_id)
         ]
 
         cursor.execute("""
             SELECT day, valence, arousal, primary_quadrant,
                    cognitive_labels, cognitive_triggers, social_interactions
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= %s AND day < %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
-        """, (recent_cutoff, today_iso))
+        """, (uid, recent_cutoff, today_iso))
         for r in cursor.fetchall():
             recent_days["emotional"].append({
                 "day": r["day"],
@@ -204,9 +206,9 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
             SELECT day, sleep_quality, exercise_type, diet_quality,
                    somatic_sensations, physical_performance, supplements
             FROM health_metrics
-            WHERE day IS NOT NULL AND day >= %s AND day < %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
-        """, (recent_cutoff, today_iso))
+        """, (uid, recent_cutoff, today_iso))
         for r in cursor.fetchall():
             recent_days["health"].append({
                 "day": r["day"],
@@ -222,9 +224,9 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
             SELECT day, deep_work_hours, shallow_work_hours,
                    time_block_adherence, cognitive_load, friction_points
             FROM productivity_metrics
-            WHERE day IS NOT NULL AND day >= %s AND day < %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC
-        """, (recent_cutoff, today_iso))
+        """, (uid, recent_cutoff, today_iso))
         for r in cursor.fetchall():
             recent_days["productivity"].append({
                 "day": r["day"],
@@ -238,16 +240,16 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         cursor.execute("""
             SELECT day, title, description, tags, event_type
             FROM events
-            WHERE day IS NOT NULL AND day >= %s AND day < %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
             ORDER BY day DESC, id DESC
-        """, (recent_cutoff, today_iso))
+        """, (uid, recent_cutoff, today_iso))
         recent_days["events"] = [dict(r) for r in cursor.fetchall()]
 
         cursor.execute("""
             SELECT AVG(valence) v, AVG(arousal) a, COUNT(*) n
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= %s
-        """, (seven_back,))
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
+        """, (uid, seven_back))
         row = cursor.fetchone()
         summary["emotional_7day"] = {
             "avg_valence": round(row["v"], 2) if row["v"] is not None else None,
@@ -258,17 +260,17 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
         cursor.execute("""
             SELECT primary_quadrant q, COUNT(*) n
             FROM emotional_analysis
-            WHERE day IS NOT NULL AND day >= %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
             GROUP BY primary_quadrant
-        """, (seven_back,))
+        """, (uid, seven_back))
         summary["quadrant_counts_7day"] = {r["q"]: r["n"] for r in cursor.fetchall() if r["q"]}
 
         cursor.execute("""
             SELECT event_type, COUNT(*) n
             FROM events
-            WHERE day IS NOT NULL AND day >= %s
+            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
             GROUP BY event_type
-        """, (seven_back,))
+        """, (uid, seven_back))
         summary["events_7day"] = {r["event_type"]: r["n"] for r in cursor.fetchall() if r["event_type"]}
 
     covered = _detect_covered_dimensions(today_transcript)
@@ -282,20 +284,20 @@ def assemble_bot_context(now: Optional[datetime] = None) -> dict:
     }
 
 
-def fetch_chat_history(conversation_id: int, limit: int = 30) -> List[dict]:
+def fetch_chat_history(conversation_id: int, user_id: UUID, limit: int = 30) -> List[dict]:
     with connect() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT role, content FROM messages
-            WHERE conversation_id = %s
+            WHERE conversation_id = %s AND user_id = %s
             ORDER BY id ASC
-        """, (conversation_id,))
+        """, (conversation_id, str(user_id)))
         rows = [dict(r) for r in cursor.fetchall()]
     return rows[-limit:]
 
 
 def generate_bot_reply(
-    conversation_id: int, graph_synthesis: Optional[str] = None
+    conversation_id: int, user_id: UUID, graph_synthesis: Optional[str] = None
 ) -> str:
     """Generate the bot's reply.
 
@@ -306,7 +308,7 @@ def generate_bot_reply(
     keeping its normal voice (LISTENER + INTERVIEWER nudge intact). For pure
     journaling messages, pass None.
     """
-    ctx = assemble_bot_context()
+    ctx = assemble_bot_context(user_id)
     covered_display = (
         ", ".join(DIMENSION_DISPLAY[d] for d in ctx["covered_today"]) or "(none yet)"
     )
@@ -345,7 +347,7 @@ def generate_bot_reply(
     )
 
     messages = [{"role": "system", "content": system}]
-    for m in fetch_chat_history(conversation_id):
+    for m in fetch_chat_history(conversation_id, user_id):
         messages.append({"role": m["role"], "content": m["content"]})
 
     tools = _goal_tools()
@@ -381,11 +383,11 @@ def generate_bot_reply(
             ],
         })
         for tc in tool_calls:
-            result = _dispatch_goal_tool(tc.function.name, tc.function.arguments)
+            result = _dispatch_goal_tool(tc.function.name, tc.function.arguments, user_id)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(result),
+                "content": json.dumps(result, default=str),
             })
 
     # Fallback: one more call without tools to force a text reply.
@@ -459,7 +461,7 @@ def _goal_tools() -> list[dict]:
     ]
 
 
-def _dispatch_goal_tool(name: str, arguments_json: str) -> dict:
+def _dispatch_goal_tool(name: str, arguments_json: str, user_id: UUID) -> dict:
     """Execute a tool call from the model. Returns a JSON-serializable dict
     describing the outcome — model receives this as the tool result and
     decides how to phrase the user-facing reply."""
@@ -472,16 +474,16 @@ def _dispatch_goal_tool(name: str, arguments_json: str) -> dict:
 
     try:
         if name == "add_goal":
-            row = goals_svc.add_user_goal(args.get("name", ""))
+            row = goals_svc.add_user_goal(args.get("name", ""), user_id)
             return {"ok": True, "goal": row}
         if name == "fulfill_goal":
-            row = goals_svc.mark_fulfilled(args.get("name", ""))
+            row = goals_svc.mark_fulfilled(args.get("name", ""), user_id)
             return {"ok": True, "goal": row}
         if name == "remove_goal":
-            row = goals_svc.mark_removed(args.get("name", ""))
+            row = goals_svc.mark_removed(args.get("name", ""), user_id)
             return {"ok": True, "goal": row}
         if name == "rename_goal":
-            row = goals_svc.rename_goal(args.get("old_name", ""), args.get("new_name", ""))
+            row = goals_svc.rename_goal(args.get("old_name", ""), args.get("new_name", ""), user_id)
             return {"ok": True, "goal": row}
     except goals_svc.GoalCapReachedError:
         return {"error": "cap_reached", "detail": "3 active goals already; fulfill or remove one first"}
@@ -495,27 +497,28 @@ def _dispatch_goal_tool(name: str, arguments_json: str) -> dict:
     return {"error": "unknown_tool", "detail": name}
 
 
-def store_assistant_message(conversation_id: int, content: str) -> int:
+def store_assistant_message(conversation_id: int, content: str, user_id: UUID) -> int:
     created_at = datetime.now().isoformat()
     with connect() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO messages (conversation_id, role, content, created_at)
-            VALUES (%s, 'assistant', %s, %s)
+            INSERT INTO messages (user_id, conversation_id, role, content, created_at)
+            VALUES (%s, %s, 'assistant', %s, %s)
             RETURNING id
-        """, (conversation_id, content, created_at))
+        """, (str(user_id), conversation_id, content, created_at))
         return cursor.fetchone()["id"]
 
 
-def process_message_background(conversation_id: int, message_content: str) -> None:
+def process_message_background(conversation_id: int, message_content: str, user_id: UUID) -> None:
     """Background-task entrypoint after a user message. Routes through LangGraph:
     journaling → existing bot; analytical → Neo4j Cypher pipeline."""
     try:
         from .langgraph_flow import process_message
-        process_message(conversation_id, message_content)
+        process_message(conversation_id, message_content, user_id)
     except Exception as e:
         print(f"[BG] Reply error for conv {conversation_id}: {e}")
         store_assistant_message(
             conversation_id,
             "Hmm, I had trouble responding just now. Want to try saying that again?",
+            user_id,
         )

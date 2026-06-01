@@ -1,6 +1,51 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { supabase } from './supabase';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+const SUPABASE_CONFIGURED =
+  !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Wraps the global fetch with a Supabase access token (when configured).
+// Aliased so the global stays callable inside this helper even after we
+// rename every consumer's `apiFetch(` → `apiFetch(` below.
+const _rawFetch = globalThis.fetch.bind(globalThis);
+async function apiFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (SUPABASE_CONFIGURED) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      headers.Authorization = `Bearer ${session.access_token}`;
+    }
+  }
+  return _rawFetch(url, { ...opts, headers });
+}
+
+function LoginScreen() {
+  const handleSignIn = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    });
+  };
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-slate-50">
+      <div className="rounded-2xl bg-white p-10 shadow-xl max-w-md w-full text-center">
+        <h1 className="text-3xl font-semibold mb-3 text-slate-900">MindForge AI</h1>
+        <p className="text-slate-600 mb-8 leading-relaxed">
+          A warm journaling companion that helps you notice the patterns in how
+          you feel, work, and live.
+        </p>
+        <button
+          onClick={handleSignIn}
+          className="w-full rounded-xl bg-slate-900 px-4 py-3 text-white font-medium hover:bg-slate-700 transition"
+        >
+          Sign in with Google
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const getQuadrantBadgeColor = (q) => {
   switch (q) {
@@ -75,8 +120,33 @@ export default function App() {
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
 
+  // Auth state. When Supabase isn't configured, treat the app as ready
+  // and skip the login gate (the backend dev shim resolves user_id).
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(!SUPABASE_CONFIGURED);
+
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED) return;
+    let unsub;
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    unsub = subscription;
+    return () => { unsub?.unsubscribe(); };
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (SUPABASE_CONFIGURED) {
+      await supabase.auth.signOut();
+    }
+  }, []);
+
   const fetchConversations = useCallback(async () => {
-    const res = await fetch(`${API}/api/conversations`);
+    const res = await apiFetch(`${API}/api/conversations`);
     if (!res.ok) return [];
     const data = await res.json();
     setConversations(data);
@@ -84,7 +154,7 @@ export default function App() {
   }, []);
 
   const loadMessages = useCallback(async (convId) => {
-    const res = await fetch(`${API}/api/conversations/${convId}/messages`);
+    const res = await apiFetch(`${API}/api/conversations/${convId}/messages`);
     if (!res.ok) return [];
     const data = await res.json();
     setMessages(data);
@@ -92,7 +162,7 @@ export default function App() {
   }, []);
 
   const createConversation = useCallback(async () => {
-    const res = await fetch(`${API}/api/conversations`, { method: 'POST' });
+    const res = await apiFetch(`${API}/api/conversations`, { method: 'POST' });
     const conv = await res.json();
     await fetchConversations();
     setActiveConvId(conv.id);
@@ -130,7 +200,7 @@ export default function App() {
   // Dashboard fetch when switching to dashboard view
   useEffect(() => {
     if (view === 'dashboard') {
-      fetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
+      apiFetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
     }
   }, [view]);
 
@@ -148,7 +218,7 @@ export default function App() {
     };
     try {
       if (verb === 'add') {
-        const res = await fetch(`${API}/api/goals`, {
+        const res = await apiFetch(`${API}/api/goals`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: rest }),
@@ -156,18 +226,18 @@ export default function App() {
         return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to add goal') };
       }
       if (verb === 'fulfill') {
-        const res = await fetch(`${API}/api/goals/${encodeURIComponent(rest)}/fulfill`, { method: 'PATCH' });
+        const res = await apiFetch(`${API}/api/goals/${encodeURIComponent(rest)}/fulfill`, { method: 'PATCH' });
         return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to fulfill goal') };
       }
       if (verb === 'remove') {
-        const res = await fetch(`${API}/api/goals/${encodeURIComponent(rest)}`, { method: 'DELETE' });
+        const res = await apiFetch(`${API}/api/goals/${encodeURIComponent(rest)}`, { method: 'DELETE' });
         return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to remove goal') };
       }
       if (verb === 'rename') {
         const parts = rest.match(/^"([^"]+)"\s+"([^"]+)"$/);
         if (!parts) return { ok: false, message: 'usage: /goal rename "Old Name" "New Name"' };
         const [, oldName, newName] = parts;
-        const res = await fetch(`${API}/api/goals/${encodeURIComponent(oldName)}/rename`, {
+        const res = await apiFetch(`${API}/api/goals/${encodeURIComponent(oldName)}/rename`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ new_name: newName }),
@@ -175,7 +245,7 @@ export default function App() {
         return res.ok ? { ok: true } : { ok: false, message: await errOf(res, 'failed to rename goal') };
       }
       if (verb === 'list') {
-        const res = await fetch(`${API}/api/goals?status=active`);
+        const res = await apiFetch(`${API}/api/goals?status=active`);
         if (!res.ok) return { ok: false, message: 'failed to list goals' };
         const rows = await res.json();
         const names = rows.map(r => r.name);
@@ -199,7 +269,7 @@ export default function App() {
     const goalResult = await tryGoalCommand(text);
     if (goalResult) {
       if (goalResult.ok) {
-        fetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
+        apiFetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
       }
       if (goalResult.listMessage) {
         setMessages(prev => [
@@ -239,7 +309,7 @@ export default function App() {
     setMessages(prev => [...prev, optimistic]);
 
     try {
-      const res = await fetch(`${API}/api/conversations/${convId}/messages`, {
+      const res = await apiFetch(`${API}/api/conversations/${convId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: text }),
@@ -285,6 +355,9 @@ export default function App() {
   };
 
   const grouped = groupByDate(conversations);
+
+  if (!authReady) return null;
+  if (SUPABASE_CONFIGURED && !session) return <LoginScreen />;
 
   return (
     <div className="h-screen flex text-slate-800 font-sans bg-[radial-gradient(circle_at_top_right,_#fed7aa_0%,_#ffffff_60%)]">
@@ -362,6 +435,13 @@ export default function App() {
             </div>
           ))}
         </div>
+
+        {SUPABASE_CONFIGURED && session && (
+          <div className="px-5 py-3 border-t border-slate-200/60 flex items-center justify-between text-xs text-slate-500">
+            <span className="truncate" title={session.user?.email}>{session.user?.email}</span>
+            <button onClick={signOut} className="ml-3 text-slate-700 hover:underline">Sign out</button>
+          </div>
+        )}
       </aside>
 
       {/* Main */}
@@ -639,7 +719,7 @@ function InspectView() {
     if (!day) return;
     let result = null;
     try {
-      const res = await fetch(`${API}/api/admin/inspect/${day}`);
+      const res = await apiFetch(`${API}/api/admin/inspect/${day}`);
       if (res.ok) result = await res.json();
     } catch {
       // swallow — `result` stays null and UI shows empty state
@@ -650,7 +730,7 @@ function InspectView() {
 
   useEffect(() => {
     (async () => {
-      const res = await fetch(`${API}/api/admin/inspect/days`);
+      const res = await apiFetch(`${API}/api/admin/inspect/days`);
       if (!res.ok) return;
       const list = await res.json();
       setDays(list);
@@ -669,7 +749,7 @@ function InspectView() {
     if (!selectedDay || reparsing) return;
     setReparsing(true);
     try {
-      await fetch(`${API}/api/admin/parse-day/${selectedDay}`, { method: 'POST' });
+      await apiFetch(`${API}/api/admin/parse-day/${selectedDay}`, { method: 'POST' });
       await loadDay(selectedDay);
     } finally {
       setReparsing(false);
@@ -680,7 +760,7 @@ function InspectView() {
     if (!selectedDay || evalLoading) return;
     setEvalLoading(true);
     try {
-      const res = await fetch(`${API}/api/admin/eval/${selectedDay}`, { method: 'POST' });
+      const res = await apiFetch(`${API}/api/admin/eval/${selectedDay}`, { method: 'POST' });
       setEvalResult(await res.json());
     } catch {
       setEvalResult({ error: 'eval call failed' });

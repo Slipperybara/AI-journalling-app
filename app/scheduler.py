@@ -1,10 +1,10 @@
 """APScheduler lifecycle for the daily batch parse.
 
-Runs the batch once per day at `settings.day_boundary_hour` (default 06:00
-local). On startup, kicks off a background thread that first runs the
-one-shot backfill (if `init_db` migrated the extraction tables) and then the
-normal 7-day catch-up sweep. Both run off the request thread so app startup
-isn't blocked.
+Gated behind `settings.run_inline_scheduler` (Phase 4). When true (local dev
+default), APScheduler runs in-process: a 06:00 local cron + a startup
+catch-up sweep. When false (Render production), neither fires — the batch
+is driven externally by a GitHub Actions cron hitting
+`POST /api/admin/run-batch`.
 """
 import threading
 
@@ -23,6 +23,9 @@ def _startup_parses() -> None:
 
 
 def start() -> None:
+    if not settings.run_inline_scheduler:
+        print("[scheduler] RUN_INLINE_SCHEDULER=false — in-process cron + catch-up disabled")
+        return
     if _scheduler.running:
         return
     _scheduler.add_job(
