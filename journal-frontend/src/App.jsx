@@ -128,6 +128,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
   const [morningBrief, setMorningBrief] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
 
@@ -388,6 +389,29 @@ export default function App() {
     }
   };
 
+  const openConversation = (id) => { setActiveConvId(id); setView('chat'); setSidebarOpen(false); };
+
+  const renameConversation = async (id, title) => {
+    await apiFetch(`${API}/api/conversations/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    fetchConversations();
+  };
+
+  const deleteConversation = async (id) => {
+    const ok = window.confirm(
+      'Remove this chat from your sidebar?\n\n' +
+      'Your conversation history is kept — it still feeds your morning briefs, ' +
+      'dashboard, and the companion’s memory. Only the sidebar entry is hidden.'
+    );
+    if (!ok) return;
+    await apiFetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
+    if (activeConvId === id) { setActiveConvId(null); setMessages([]); }
+    fetchConversations();
+  };
+
   if (!authReady) return null;
   if (SUPABASE_CONFIGURED && !session) return <LoginScreen />;
 
@@ -395,8 +419,23 @@ export default function App() {
 
   return (
     <div className="relative h-screen flex overflow-hidden" style={{ background: JOURNAL_BG, fontFamily: SANS }}>
-      {/* Left sidebar — minimal, editorial */}
-      <aside className="relative z-10 flex flex-col shrink-0 pt-10 pb-8 pl-8 pr-5" style={{ width: '224px' }}>
+      {/* Mobile backdrop when the drawer is open */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-20 md:hidden" style={{ background: 'rgba(40,40,38,0.18)' }} onClick={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Left sidebar — minimal, editorial. Static on desktop; a slide-in
+          drawer on mobile (collapsed unless opened). */}
+      <aside
+        className={
+          'z-30 flex flex-col shrink-0 pt-10 pb-8 pl-8 pr-5 ' +
+          'fixed inset-y-0 left-0 md:static ' +
+          'bg-white/85 backdrop-blur-md md:bg-transparent md:backdrop-blur-none ' +
+          'transition-transform duration-300 ease-out md:translate-x-0 ' +
+          (sidebarOpen ? 'translate-x-0' : '-translate-x-full')
+        }
+        style={{ width: '224px' }}
+      >
         <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase', marginBottom: '22px' }}>
           MindForge
         </span>
@@ -406,7 +445,7 @@ export default function App() {
           {navItems.map(([v, label]) => (
             <button
               key={v}
-              onClick={() => setView(v)}
+              onClick={() => { setView(v); setSidebarOpen(false); }}
               className="text-left"
               style={{
                 fontFamily: SANS, fontSize: '13px',
@@ -427,30 +466,19 @@ export default function App() {
           {conversations.length === 0 && (
             <span style={{ fontSize: '12px', color: '#BDB9B2' }}>Nothing yet.</span>
           )}
-          {conversations.map(c => {
-            const isActive = activeConvId === c.id && view === 'chat';
-            return (
-              <button
-                key={c.id}
-                onClick={() => { setActiveConvId(c.id); setView('chat'); }}
-                className="text-left flex flex-col gap-0.5 py-2"
-                style={{ background: 'transparent', cursor: 'pointer' }}
-              >
-                <span
-                  className="truncate"
-                  style={{ fontSize: '13px', fontWeight: isActive ? 500 : 400, color: isActive ? '#2A2825' : '#9A9790', transition: 'color 0.2s' }}
-                >
-                  {conversationPreview(c)}
-                </span>
-                <span style={{ fontSize: '11px', color: isActive ? '#A8A59E' : '#BDB9B2' }}>
-                  {dayLabel(c.started_at)}
-                </span>
-              </button>
-            );
-          })}
+          {conversations.map(c => (
+            <SidebarEntry
+              key={c.id}
+              conv={c}
+              isActive={activeConvId === c.id && view === 'chat'}
+              onOpen={openConversation}
+              onRename={renameConversation}
+              onDelete={deleteConversation}
+            />
+          ))}
 
           <button
-            onClick={createConversation}
+            onClick={() => { createConversation(); setSidebarOpen(false); }}
             className="text-left"
             style={{ padding: '8px 0', marginTop: '10px', fontSize: '13px', color: '#C0BDB6', fontFamily: SANS, background: 'transparent', cursor: 'pointer', transition: 'color 0.2s' }}
             onMouseEnter={(e) => (e.currentTarget.style.color = '#7A7870')}
@@ -471,6 +499,18 @@ export default function App() {
 
       {/* Main */}
       <main className="relative z-10 flex-1 flex flex-col overflow-hidden">
+        {/* Mobile menu button — opens the drawer */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="md:hidden absolute top-5 left-4 z-10 p-2 rounded-md"
+          style={{ background: 'rgba(255,255,255,0.5)', color: '#6E6B64', lineHeight: 0 }}
+          aria-label="Open menu"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+
         {view === 'chat' && (
           <ChatView
             messages={messages}
@@ -487,8 +527,76 @@ export default function App() {
         {view === 'inspect' && <InspectView />}
       </main>
 
-      {/* Right spacer balances the centered journal column */}
-      {view === 'chat' && <div className="shrink-0" style={{ width: '224px' }} />}
+      {/* Right spacer — narrower than the sidebar so the journal column sits
+          slightly right of centre. Hidden on mobile. */}
+      {view === 'chat' && <div className="hidden md:block shrink-0" style={{ width: '120px' }} />}
+    </div>
+  );
+}
+
+function SidebarEntry({ conv, isActive, onOpen, onRename, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const label = conv.title || conversationPreview(conv);
+
+  const startRename = () => { setDraft(conv.title || ''); setEditing(true); setMenuOpen(false); };
+  const commitRename = () => {
+    setEditing(false);
+    const t = draft.trim();
+    if (t && t !== (conv.title || '')) onRename(conv.id, t);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(false); }}
+        onBlur={commitRename}
+        placeholder={conversationPreview(conv)}
+        className="my-1.5 w-full outline-none"
+        style={{ fontFamily: SANS, fontSize: '13px', color: '#2A2825', background: 'rgba(255,255,255,0.7)', borderRadius: '4px', padding: '4px 6px' }}
+      />
+    );
+  }
+
+  return (
+    <div className="group relative flex items-start">
+      <button
+        onClick={() => onOpen(conv.id)}
+        className="text-left flex-1 min-w-0 flex flex-col gap-0.5 py-2"
+        style={{ background: 'transparent', cursor: 'pointer' }}
+      >
+        <span className="truncate" style={{ fontSize: '13px', fontWeight: isActive ? 500 : 400, color: isActive ? '#2A2825' : '#9A9790', transition: 'color 0.2s' }}>
+          {label}
+        </span>
+        <span style={{ fontSize: '11px', color: isActive ? '#A8A59E' : '#BDB9B2' }}>
+          {dayLabel(conv.started_at)}
+        </span>
+      </button>
+      <button
+        onClick={() => setMenuOpen((o) => !o)}
+        className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0 px-1.5 py-2"
+        style={{ color: '#A8A59E', background: 'transparent', cursor: 'pointer', lineHeight: 1, fontSize: '15px' }}
+        aria-label="Chat options"
+      >
+        ⋯
+      </button>
+      {menuOpen && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+          <div className="absolute right-0 top-8 z-20 rounded-md py-1" style={{ background: 'rgba(255,255,255,0.97)', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 4px 14px rgba(0,0,0,0.08)', minWidth: '116px' }}>
+            <button onClick={startRename} className="block w-full text-left px-3 py-1.5 hover:bg-black/5" style={{ fontSize: '12px', color: '#4A4842', background: 'transparent', cursor: 'pointer' }}>
+              Rename
+            </button>
+            <button onClick={() => { setMenuOpen(false); onDelete(conv.id); }} className="block w-full text-left px-3 py-1.5 hover:bg-black/5" style={{ fontSize: '12px', color: '#B0524A', background: 'transparent', cursor: 'pointer' }}>
+              Delete
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -515,27 +623,27 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
   }, [showInput, activeConv?.id]);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-  const COL = { maxWidth: '560px', margin: '0 auto', width: '100%' };
+  const COL = { maxWidth: '620px', margin: '0 auto', width: '100%' };
 
   return (
     <>
-      {/* Date header */}
-      <div className="pt-10 flex items-baseline gap-3 px-6" style={COL}>
+      {/* Date header (extra left padding on mobile clears the menu button) */}
+      <div className="pt-10 flex items-baseline gap-3 pl-16 pr-6 md:px-6" style={COL}>
         <span style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#9C998F', textTransform: 'uppercase' }}>
           {today}
         </span>
         {activeConv && (
           <span className="truncate" style={{ fontSize: '11px', letterSpacing: '0.06em', color: '#B4B1A9', textTransform: 'uppercase' }}>
-            · {conversationPreview(activeConv)}
+            · {activeConv.title || conversationPreview(activeConv)}
           </span>
         )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto no-scrollbar pt-10 pb-12 px-6" style={{ width: '100%' }}>
+      <div className="flex-1 overflow-y-auto no-scrollbar pt-10 pb-12 pl-16 pr-6 md:px-6" style={{ width: '100%' }}>
         <div style={COL}>
           {messages.length === 0 && !thinking && (
-            <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
+            <p style={{ fontFamily: SERIF, fontSize: '19px', lineHeight: 1.65, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
               {morningBrief || "What's on your mind?"}
             </p>
           )}
@@ -565,7 +673,7 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
                 rows={1}
                 placeholder="Write here…"
                 className="w-full resize-none outline-none no-scrollbar"
-                style={{ background: 'transparent', border: 'none', fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#38342F', caretColor: '#A8A49C', maxHeight: '45vh' }}
+                style={{ background: 'transparent', border: 'none', fontFamily: SERIF, fontSize: '20px', lineHeight: 1.65, color: '#38342F', caretColor: '#A8A49C', maxHeight: '45vh' }}
               />
               {input === '' && (
                 <p style={{ fontSize: '11px', letterSpacing: '0.06em', color: '#B4B1A9', marginTop: '6px' }}>
@@ -594,7 +702,7 @@ function JournalMessage({ message }) {
         </div>
       ) : (
         <div className="mb-6">
-          <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
+          <p style={{ fontFamily: SERIF, fontSize: '19px', lineHeight: 1.65, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
             {message.content}
           </p>
         </div>

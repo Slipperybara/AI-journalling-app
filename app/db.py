@@ -75,6 +75,11 @@ def init_db() -> None:
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, started_at DESC)")
+        # Additive migrations: optional user-set title, and a soft-delete flag.
+        # "Deleting" a chat only hides it from the sidebar — its messages stay
+        # so the nightly parser + knowledge graph keep referencing them.
+        cursor.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS title TEXT")
+        cursor.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
