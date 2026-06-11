@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Component } from 'react';
 import { supabase } from './supabase';
 import { HttpAgent } from '@ag-ui/client';
 import { motion } from 'motion/react';
@@ -127,6 +127,35 @@ const conversationPreview = (c) => {
   return 'New conversation';
 };
 
+
+// Keeps one crashing view (e.g. a bad data shape) from white-screening the
+// whole app — the sidebar/nav stay usable and the error clears on view change.
+class ViewErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidUpdate(prevProps) {
+    if (prevProps.viewKey !== this.props.viewKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex-1 flex items-center justify-center p-10 text-center">
+          <p style={{ fontFamily: SERIF, fontSize: '18px', color: '#9A9790' }}>
+            Something went wrong showing this view. Try another tab, or reload the page.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [view, setView] = useState('chat');
@@ -534,20 +563,22 @@ export default function App() {
           </svg>
         </button>
 
-        {view === 'chat' && (
-          <ChatView
-            messages={messages}
-            activeConv={conversations.find(c => c.id === activeConvId)}
-            morningBrief={morningBrief}
-            input={input}
-            setInput={setInput}
-            isWaiting={isWaiting}
-            handleKeyDown={handleKeyDown}
-            messagesEndRef={messagesEndRef}
-          />
-        )}
-        {view === 'dashboard' && <DashboardView data={dashboard} />}
-        {view === 'inspect' && <InspectView />}
+        <ViewErrorBoundary viewKey={view}>
+          {view === 'chat' && (
+            <ChatView
+              messages={messages}
+              activeConv={conversations.find(c => c.id === activeConvId)}
+              morningBrief={morningBrief}
+              input={input}
+              setInput={setInput}
+              isWaiting={isWaiting}
+              handleKeyDown={handleKeyDown}
+              messagesEndRef={messagesEndRef}
+            />
+          )}
+          {view === 'dashboard' && <DashboardView data={dashboard} />}
+          {view === 'inspect' && <InspectView />}
+        </ViewErrorBoundary>
       </main>
 
       {/* Right spacer — narrower than the sidebar so the journal column sits
@@ -1080,7 +1111,7 @@ function TranscriptMessage({ m }) {
 }
 
 function ExtractionsColumn({ extractions, onEval, evalLoading, evalResult }) {
-  const { emotional, health, productivity, events, todos } = extractions;
+  const { emotional, health, productivity, events = [] } = extractions || {};
   return (
     <section className="space-y-3">
       <h3 className="font-medium text-slate-900 text-sm">Extractions</h3>
@@ -1112,20 +1143,6 @@ function ExtractionsColumn({ extractions, onEval, evalLoading, evalResult }) {
             </div>
           )}
         </ExtractionCard>
-        <ExtractionCard title={`Todos (${todos.length})`}>
-          {todos.length === 0 ? <NotExtracted /> : (
-            <ul className="space-y-1">
-              {todos.map((t) => (
-                <li key={t.id} className="text-sm text-slate-700 flex gap-2">
-                  <span className="text-slate-400">•</span>
-                  <span className="flex-1">{t.task_description}</span>
-                  {t.due_date && <span className="text-[10px] text-rose-500">due {t.due_date}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </ExtractionCard>
-
         <ExtractionCard title="Automated evaluation (preview)">
           <div className="space-y-2">
             <p className="text-xs text-slate-500">
