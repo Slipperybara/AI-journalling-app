@@ -296,18 +296,11 @@ def fetch_chat_history(conversation_id: int, user_id: UUID, limit: int = 30) -> 
     return rows[-limit:]
 
 
-def generate_bot_reply(
+def _build_reply_messages(
     conversation_id: int, user_id: UUID, graph_synthesis: Optional[str] = None
-) -> str:
-    """Generate the bot's reply.
-
-    For analytical messages, `graph_synthesis` is the digest produced by
-    `app.agents.synthesizer.synthesize_response` — pre-summarized facts pulled
-    from the user's Neo4j history graph. It's injected as a GRAPH_FACTS block
-    so the bot can weave the relevant pieces in under its Q&A priority while
-    keeping its normal voice (LISTENER + INTERVIEWER nudge intact). For pure
-    journaling messages, pass None.
-    """
+) -> tuple[list, list]:
+    """Assemble the (messages, tools) for a bot reply. Shared by the
+    non-streaming and streaming reply generators so they can't drift."""
     ctx = assemble_bot_context(user_id)
     covered_display = (
         ", ".join(DIMENSION_DISPLAY[d] for d in ctx["covered_today"]) or "(none yet)"
@@ -350,7 +343,22 @@ def generate_bot_reply(
     for m in fetch_chat_history(conversation_id, user_id):
         messages.append({"role": m["role"], "content": m["content"]})
 
-    tools = _goal_tools()
+    return messages, _goal_tools()
+
+
+def generate_bot_reply(
+    conversation_id: int, user_id: UUID, graph_synthesis: Optional[str] = None
+) -> str:
+    """Generate the bot's reply.
+
+    For analytical messages, `graph_synthesis` is the digest produced by
+    `app.agents.synthesizer.synthesize_response` — pre-summarized facts pulled
+    from the user's Neo4j history graph. It's injected as a GRAPH_FACTS block
+    so the bot can weave the relevant pieces in under its Q&A priority while
+    keeping its normal voice (LISTENER + INTERVIEWER nudge intact). For pure
+    journaling messages, pass None.
+    """
+    messages, tools = _build_reply_messages(conversation_id, user_id, graph_synthesis)
 
     # Multi-round tool dispatch. Cap at 2 rounds so the model can't loop —
     # after that, we accept the next text response even if it tries to call
@@ -397,6 +405,81 @@ def generate_bot_reply(
         temperature=0.7,
     )
     return (completion.choices[0].message.content or "").strip()
+
+
+def generate_bot_reply_stream(
+    conversation_id: int, user_id: UUID, graph_synthesis: Optional[str] = None
+):
+    """Streaming twin of generate_bot_reply. Yields text deltas.
+
+    Goal-tool rounds carry no user-facing text, so they run the same as the
+    non-streaming path (accumulate tool-call args, dispatch, loop). Only the
+    text-producing round is streamed token-by-token. The common journaling
+    case (no tools) streams from the first chunk.
+    """
+    messages, tools = _build_reply_messages(conversation_id, user_id, graph_synthesis)
+
+    for _ in range(2):
+        stream = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            temperature=0.7,
+            stream=True,
+        )
+        content_parts: list[str] = []
+        tool_acc: dict[int, dict] = {}
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                acc = tool_acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                if tc.id:
+                    acc["id"] = tc.id
+                if tc.function and tc.function.name:
+                    acc["name"] = tc.function.name
+                if tc.function and tc.function.arguments:
+                    acc["arguments"] += tc.function.arguments
+            if getattr(delta, "content", None):
+                content_parts.append(delta.content)
+                yield delta.content
+
+        if not tool_acc:
+            return  # text round complete — all deltas already yielded
+
+        # Tool round: replay the assistant tool-call turn, dispatch, loop.
+        messages.append({
+            "role": "assistant",
+            "content": "".join(content_parts),
+            "tool_calls": [
+                {
+                    "id": a["id"],
+                    "type": "function",
+                    "function": {"name": a["name"], "arguments": a["arguments"]},
+                }
+                for a in tool_acc.values()
+            ],
+        })
+        for a in tool_acc.values():
+            result = _dispatch_goal_tool(a["name"], a["arguments"], user_id)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": a["id"],
+                "content": json.dumps(result, default=str),
+            })
+
+    # Fallback: force a final text reply (no tools), still streamed.
+    stream = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.7,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices and getattr(chunk.choices[0].delta, "content", None):
+            yield chunk.choices[0].delta.content
 
 
 def _goal_tools() -> list[dict]:

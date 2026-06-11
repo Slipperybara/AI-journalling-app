@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
+import { HttpAgent } from '@ag-ui/client';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -19,6 +20,12 @@ async function apiFetch(url, opts = {}) {
     }
   }
   return _rawFetch(url, { ...opts, headers });
+}
+
+async function getAccessToken() {
+  if (!SUPABASE_CONFIGURED) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
 }
 
 function LoginScreen() {
@@ -118,7 +125,6 @@ export default function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
-  const pollRef = useRef(null);
 
   // Auth state. When Supabase isn't configured, treat the app as ready
   // and skip the login gate (the backend dev shim resolves user_id).
@@ -203,9 +209,6 @@ export default function App() {
       apiFetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
     }
   }, [view]);
-
-  // Cleanup polling on unmount / conv change
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const tryGoalCommand = async (text) => {
     const match = text.match(/^\/goal\s+(\w+)\s*(.*)$/i);
@@ -309,38 +312,46 @@ export default function App() {
     setMessages(prev => [...prev, optimistic]);
 
     try {
-      const res = await apiFetch(`${API}/api/conversations/${convId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text }),
+      // Stream the assistant reply over AG-UI. The endpoint persists both the
+      // user message and the assistant reply, so we don't POST /messages here;
+      // the optimistic user bubble is reconciled by loadMessages on complete.
+      const token = await getAccessToken();
+      const agent = new HttpAgent({
+        url: `${API}/api/conversations/${convId}/agui`,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        // The SDK references global fetch unbound from window; pass a bound
+        // copy or it throws "Illegal invocation" in the browser.
+        fetch: globalThis.fetch.bind(globalThis),
       });
-      if (!res.ok) throw new Error('send failed');
-      const stored = await res.json();
+      agent.messages = [{ id: `u-${Date.now()}`, role: 'user', content: text }];
 
-      // Replace optimistic with persisted version
-      setMessages(prev => prev.map(m => m.id === optimistic.id ? stored : m));
-
-      // Poll for assistant reply
-      const baselineId = stored.id;
-      const start = Date.now();
-      pollRef.current = setInterval(async () => {
-        try {
-          const fresh = await loadMessages(convId);
-          const hasNewAssistant = fresh.some(m => m.role === 'assistant' && m.id > baselineId);
-          if (hasNewAssistant) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setIsWaiting(false);
-            fetchConversations();
-          } else if (Date.now() - start > 45000) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setIsWaiting(false);
-          }
-        } catch {
-          // ignore transient errors during polling
+      // runAgent(params, subscriber) returns a Promise; the subscriber's
+      // callbacks fire as events arrive. textMessageBuffer is the running
+      // accumulated assistant text, so we render it directly.
+      const streamId = `stream-${Date.now()}`;
+      let started = false;
+      const upsertStream = (content) => {
+        if (!started) {
+          started = true;
+          setIsWaiting(false); // first token: swap spinner for live text
+          setMessages(prev => [
+            ...prev,
+            { id: streamId, role: 'assistant', content, created_at: new Date().toISOString() },
+          ]);
+        } else {
+          setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content } : m));
         }
-      }, 1500);
+      };
+
+      await agent.runAgent({}, {
+        onTextMessageContentEvent: ({ textMessageBuffer }) => upsertStream(textMessageBuffer),
+        onRunErrorEvent: () => upsertStream('(Something went wrong streaming the reply.)'),
+      });
+
+      // Reconcile optimistic/streamed bubbles with persisted rows.
+      setIsWaiting(false);
+      loadMessages(convId);
+      fetchConversations();
     } catch {
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
       setIsWaiting(false);
