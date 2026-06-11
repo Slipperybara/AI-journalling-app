@@ -628,8 +628,8 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
   return (
     <>
       {/* Date header (extra left padding on mobile clears the menu button) */}
-      <div className="pt-10 flex items-baseline gap-3 pl-16 pr-6 md:px-6" style={COL}>
-        <span style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#9C998F', textTransform: 'uppercase' }}>
+      <div className="pt-10 flex items-baseline gap-3 pl-16 pr-6 md:px-6 min-w-0" style={COL}>
+        <span className="shrink-0" style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#9C998F', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
           {today}
         </span>
         {activeConv && (
