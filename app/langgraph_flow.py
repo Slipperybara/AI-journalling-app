@@ -69,10 +69,9 @@ def _router_node(state: GraphState) -> dict:
 
 
 def _bot_node(state: GraphState) -> dict:
-    uid = UUID(state["user_id"])
-    reply = generate_bot_reply(state["conversation_id"], uid)
-    store_assistant_message(state["conversation_id"], reply, uid)
-    return {"final_response": reply}
+    # Journaling needs no graph work beyond routing. The reply is generated
+    # outside the graph (streamed by the endpoint, or by process_message).
+    return {}
 
 
 def _cypher_agent_node(state: GraphState) -> dict:
@@ -136,18 +135,15 @@ def _evaluator_node(state: GraphState) -> dict:
 
 
 def _synthesizer_node(state: GraphState) -> dict:
-    """Digest the graph result into facts, then hand off to the bot for the
-    user-facing reply."""
-    uid = UUID(state["user_id"])
+    """Digest the graph result into facts. Reply generation happens outside
+    the graph so it can be streamed."""
     failed = bool(state.get("query_error")) and state.get("retry_count", 0) >= 3
     facts = synthesize_response(
         user_message=state["message"],
         graph_result=state.get("graph_result", []),
         failed=failed,
     )
-    reply = generate_bot_reply(state["conversation_id"], uid, graph_synthesis=facts)
-    store_assistant_message(state["conversation_id"], reply, uid)
-    return {"final_response": reply, "sqlite_context": facts}
+    return {"sqlite_context": facts}
 
 
 # ── Conditional routing functions ───────────────────────────────────────────
@@ -201,9 +197,9 @@ _graph = _build_graph()
 
 # ── Public entrypoint ────────────────────────────────────────────────────────
 
-def process_message(conversation_id: int, message_content: str, user_id: UUID) -> None:
-    """Entrypoint called from bot.process_message_background().
-    Routes the message and writes the assistant reply to the messages table."""
+def run_graph(conversation_id: int, message_content: str, user_id: UUID) -> dict:
+    """Run routing + retrieval WITHOUT generating the reply. Returns the final
+    GraphState dict (carries `intent` and, for analytical, `sqlite_context`)."""
     initial_state: GraphState = {
         "message": message_content,
         "conversation_id": conversation_id,
@@ -220,4 +216,14 @@ def process_message(conversation_id: int, message_content: str, user_id: UUID) -
         "search_history": [],
         "final_response": "",
     }
-    _graph.invoke(initial_state)
+    return _graph.invoke(initial_state)
+
+
+def process_message(conversation_id: int, message_content: str, user_id: UUID) -> str:
+    """Non-streaming entrypoint (background-task / tests). Runs the graph then
+    generates + persists the reply."""
+    state = run_graph(conversation_id, message_content, user_id)
+    facts = state.get("sqlite_context") or None
+    reply = generate_bot_reply(conversation_id, user_id, graph_synthesis=facts)
+    store_assistant_message(conversation_id, reply, user_id)
+    return reply
