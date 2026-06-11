@@ -75,6 +75,31 @@ def test_run_graph_returns_state_without_reply():
         assert cur.fetchone()["n"] == 0
 
 
+def test_run_graph_streaming_emits_retrieval_for_analytical():
+    from app import langgraph_flow
+    snaps = [
+        {"intent": "analytical", "sqlite_context": ""},
+        {"intent": "analytical", "sqlite_context": "FACTS: slept 7h"},
+    ]
+    with patch.object(langgraph_flow._graph, "stream", return_value=iter(snaps)):
+        items = list(langgraph_flow.run_graph_streaming(1, "what about my sleep?", TEST_USER_ID))
+    assert "retrieval_start" in items
+    assert "retrieval_end" in items
+    assert items.index("retrieval_start") < items.index("retrieval_end")
+    assert items[-1][0] == "final"
+    assert items[-1][1]["sqlite_context"] == "FACTS: slept 7h"
+
+
+def test_run_graph_streaming_no_retrieval_for_journaling():
+    from app import langgraph_flow
+    snaps = [{"intent": "journaling", "sqlite_context": ""}]
+    with patch.object(langgraph_flow._graph, "stream", return_value=iter(snaps)):
+        items = list(langgraph_flow.run_graph_streaming(1, "had a good day", TEST_USER_ID))
+    assert "retrieval_start" not in items
+    assert "retrieval_end" not in items
+    assert items[-1][0] == "final"
+
+
 def _agui_payload(text: str) -> dict:
     # AG-UI wire format is camelCase (RunAgentInput aliases).
     return {
@@ -95,7 +120,7 @@ def test_agui_endpoint_streams_events_and_persists():
     conv = _seed_conversation(TEST_USER_ID)
     main.app.dependency_overrides[get_current_user_id] = lambda: TEST_USER_ID
     try:
-        with patch("app.routers.agui.run_graph", return_value={"intent": "journaling", "sqlite_context": ""}), \
+        with patch("app.routers.agui.run_graph_streaming", return_value=iter([("final", {"intent": "journaling", "sqlite_context": ""})])), \
              patch("app.routers.agui.generate_bot_reply_stream", return_value=iter(["Hi", " Jerry"])):
             client = TestClient(main.app)
             body = b""

@@ -197,10 +197,8 @@ _graph = _build_graph()
 
 # ── Public entrypoint ────────────────────────────────────────────────────────
 
-def run_graph(conversation_id: int, message_content: str, user_id: UUID) -> dict:
-    """Run routing + retrieval WITHOUT generating the reply. Returns the final
-    GraphState dict (carries `intent` and, for analytical, `sqlite_context`)."""
-    initial_state: GraphState = {
+def _initial_state(conversation_id: int, message_content: str, user_id: UUID) -> "GraphState":
+    return {
         "message": message_content,
         "conversation_id": conversation_id,
         "user_id": str(user_id),
@@ -216,7 +214,39 @@ def run_graph(conversation_id: int, message_content: str, user_id: UUID) -> dict
         "search_history": [],
         "final_response": "",
     }
-    return _graph.invoke(initial_state)
+
+
+def run_graph(conversation_id: int, message_content: str, user_id: UUID) -> dict:
+    """Run routing + retrieval WITHOUT generating the reply. Returns the final
+    GraphState dict (carries `intent` and, for analytical, `sqlite_context`)."""
+    return _graph.invoke(_initial_state(conversation_id, message_content, user_id))
+
+
+def run_graph_streaming(conversation_id: int, message_content: str, user_id: UUID):
+    """Generator variant of run_graph that surfaces retrieval progress so the
+    caller can give the user live feedback (e.g. tint the UI while the graph
+    searches Neo4j).
+
+    Yields, in order:
+      - "retrieval_start"  — once, when the analytical (GraphRAG) path is taken
+      - "retrieval_end"    — once the graph finishes, iff retrieval happened
+      - ("final", state)   — the completed GraphState dict (always last)
+
+    The journaling path emits neither retrieval signal — just the final state.
+    """
+    retrieval = False
+    final: dict = dict(_initial_state(conversation_id, message_content, user_id))
+    for snapshot in _graph.stream(
+        _initial_state(conversation_id, message_content, user_id),
+        stream_mode="values",
+    ):
+        final = snapshot
+        if not retrieval and snapshot.get("intent") == "analytical":
+            retrieval = True
+            yield "retrieval_start"
+    if retrieval:
+        yield "retrieval_end"
+    yield ("final", final)
 
 
 def process_message(conversation_id: int, message_content: str, user_id: UUID) -> str:

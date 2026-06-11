@@ -22,6 +22,8 @@ from ag_ui.core import (
     RunStartedEvent,
     RunFinishedEvent,
     RunErrorEvent,
+    StepStartedEvent,
+    StepFinishedEvent,
     TextMessageStartEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -31,7 +33,7 @@ from ag_ui.encoder import EventEncoder
 from ..auth import get_current_user_id
 from ..bot import generate_bot_reply_stream, store_assistant_message
 from ..db import connect
-from ..langgraph_flow import run_graph
+from ..langgraph_flow import run_graph_streaming
 
 
 router = APIRouter(prefix="/api/conversations/{conv_id}/agui", tags=["agui"])
@@ -85,7 +87,18 @@ async def agui_run(
         message_id = str(uuid.uuid4())
         full: list[str] = []
         try:
-            state = run_graph(conv_id, user_text, user_id)
+            # Run the graph, surfacing the retrieval phase as STEP events so the
+            # UI can react (e.g. tint cool while searching the knowledge graph).
+            state = {}
+            for item in run_graph_streaming(conv_id, user_text, user_id):
+                if item == "retrieval_start":
+                    yield encoder.encode(StepStartedEvent(
+                        type=EventType.STEP_STARTED, step_name="retrieval"))
+                elif item == "retrieval_end":
+                    yield encoder.encode(StepFinishedEvent(
+                        type=EventType.STEP_FINISHED, step_name="retrieval"))
+                elif isinstance(item, tuple) and item[0] == "final":
+                    state = item[1]
             facts = state.get("sqlite_context") or None
 
             yield encoder.encode(TextMessageStartEvent(

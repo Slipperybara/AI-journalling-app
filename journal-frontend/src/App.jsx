@@ -7,13 +7,20 @@ import logo from './assets/logo.png';
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 // Editorial design tokens (from the reference "Design main interface").
-// Warm near-white on the lower-left fading to a soft sky-blue-grey on the
-// upper-right — matching the reference background asset's hint of blue.
-const JOURNAL_BG = [
+// The background carries a gentle ambient tint: warm (orange) during normal
+// conversation, cool (blue) while the bot is searching the knowledge graph
+// (the retrieval phase). The two share the same structure and crossfade.
+const BG_COOL = [
   'radial-gradient(ellipse at 2% 98%, rgba(243, 242, 238, 0.85) 0%, transparent 52%)',
-  'radial-gradient(ellipse at 100% 0%, rgba(190, 204, 220, 0.42) 0%, transparent 56%)',
-  'radial-gradient(ellipse at 78% 58%, rgba(202, 212, 223, 0.20) 0%, transparent 60%)',
-  'linear-gradient(110deg, #E6E7E4 0%, #DCDFE1 40%, #D1D7DB 70%, #CAD1D8 100%)',
+  'radial-gradient(ellipse at 100% 0%, rgba(190, 204, 220, 0.45) 0%, transparent 56%)',
+  'radial-gradient(ellipse at 78% 58%, rgba(202, 212, 223, 0.22) 0%, transparent 60%)',
+  'linear-gradient(110deg, #E6E7E4 0%, #DBDFE2 40%, #CFD6DC 70%, #C7D0D9 100%)',
+].join(', ');
+const BG_WARM = [
+  'radial-gradient(ellipse at 2% 98%, rgba(245, 242, 237, 0.85) 0%, transparent 52%)',
+  'radial-gradient(ellipse at 100% 0%, rgba(232, 200, 172, 0.36) 0%, transparent 56%)',
+  'radial-gradient(ellipse at 78% 58%, rgba(231, 212, 193, 0.18) 0%, transparent 60%)',
+  'linear-gradient(110deg, #ECE9E4 0%, #E5DED3 40%, #DFD6C7 70%, #DAD1C0 100%)',
 ].join(', ');
 const SERIF = "'Lora', Georgia, serif";
 const SANS = "'DM Sans', system-ui, sans-serif";
@@ -130,6 +137,7 @@ export default function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const [morningBrief, setMorningBrief] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [bgMode, setBgMode] = useState('warm'); // 'warm' (conversing) | 'cool' (retrieving)
   const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
 
@@ -369,16 +377,21 @@ export default function App() {
       };
 
       await agent.runAgent({}, {
+        // Ambient tint: cool while the bot searches the graph, warm otherwise.
+        onStepStartedEvent: ({ event }) => { if (event.stepName === 'retrieval') setBgMode('cool'); },
+        onStepFinishedEvent: ({ event }) => { if (event.stepName === 'retrieval') setBgMode('warm'); },
         onTextMessageContentEvent: ({ textMessageBuffer }) => upsertStream(textMessageBuffer),
         onRunErrorEvent: () => upsertStream('(Something went wrong streaming the reply.)'),
       });
 
       // Reconcile optimistic/streamed bubbles with persisted rows.
+      setBgMode('warm');
       setIsWaiting(false);
       loadMessages(convId);
       fetchConversations();
     } catch {
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
+      setBgMode('warm');
       setIsWaiting(false);
     }
   };
@@ -419,7 +432,13 @@ export default function App() {
   const navItems = [['chat', 'Chat'], ['dashboard', 'Dashboard'], ['inspect', 'Inspect']];
 
   return (
-    <div className="relative h-screen flex overflow-hidden" style={{ background: JOURNAL_BG, fontFamily: SANS }}>
+    <div className="relative h-screen flex overflow-hidden" style={{ background: BG_WARM, fontFamily: SANS }}>
+      {/* Cool (retrieval) tint — crossfades in while the bot searches the graph */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: BG_COOL, opacity: bgMode === 'cool' ? 1 : 0, transition: 'opacity 1.1s ease' }}
+      />
+
       {/* Mobile backdrop when the drawer is open */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-20 md:hidden" style={{ background: 'rgba(40,40,38,0.18)' }} onClick={() => setSidebarOpen(false)} />
