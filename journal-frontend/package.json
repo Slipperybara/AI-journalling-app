@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ag-ui/client": "^0.0.56",
+    "@ag-ui/core": "^0.0.56",
     "@supabase/supabase-js": "^2.106.2",
     "@tailwindcss/vite": "^4.3.0",
     "react": "^19.2.6",

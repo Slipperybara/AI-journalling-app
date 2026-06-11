@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
+import { HttpAgent } from '@ag-ui/client';
+import { EventType } from '@ag-ui/core';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -19,6 +21,12 @@ async function apiFetch(url, opts = {}) {
     }
   }
   return _rawFetch(url, { ...opts, headers });
+}
+
+async function getAccessToken() {
+  if (!SUPABASE_CONFIGURED) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
 }
 
 function LoginScreen() {
@@ -118,7 +126,6 @@ export default function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
-  const pollRef = useRef(null);
 
   // Auth state. When Supabase isn't configured, treat the app as ready
   // and skip the login gate (the backend dev shim resolves user_id).
@@ -203,9 +210,6 @@ export default function App() {
       apiFetch(`${API}/api/dashboard`).then(r => r.json()).then(setDashboard).catch(() => {});
     }
   }, [view]);
-
-  // Cleanup polling on unmount / conv change
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const tryGoalCommand = async (text) => {
     const match = text.match(/^\/goal\s+(\w+)\s*(.*)$/i);
@@ -309,38 +313,52 @@ export default function App() {
     setMessages(prev => [...prev, optimistic]);
 
     try {
-      const res = await apiFetch(`${API}/api/conversations/${convId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text }),
+      // Stream the assistant reply over AG-UI. The endpoint persists both the
+      // user message and the assistant reply, so we don't POST /messages here;
+      // the optimistic user bubble is reconciled by loadMessages on complete.
+      const token = await getAccessToken();
+      const agent = new HttpAgent({
+        url: `${API}/api/conversations/${convId}/agui`,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error('send failed');
-      const stored = await res.json();
+      agent.messages = [{ id: `u-${Date.now()}`, role: 'user', content: text }];
 
-      // Replace optimistic with persisted version
-      setMessages(prev => prev.map(m => m.id === optimistic.id ? stored : m));
+      const streamId = `stream-${Date.now()}`;
+      let acc = '';
+      let started = false;
 
-      // Poll for assistant reply
-      const baselineId = stored.id;
-      const start = Date.now();
-      pollRef.current = setInterval(async () => {
-        try {
-          const fresh = await loadMessages(convId);
-          const hasNewAssistant = fresh.some(m => m.role === 'assistant' && m.id > baselineId);
-          if (hasNewAssistant) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setIsWaiting(false);
-            fetchConversations();
-          } else if (Date.now() - start > 45000) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
-            setIsWaiting(false);
+      agent.runAgent().subscribe({
+        next: (event) => {
+          if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
+            acc += event.delta || '';
+            if (!started) {
+              started = true;
+              setIsWaiting(false); // first token: swap spinner for live text
+              setMessages(prev => [
+                ...prev,
+                { id: streamId, role: 'assistant', content: acc, created_at: new Date().toISOString() },
+              ]);
+            } else {
+              setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content: acc } : m));
+            }
           }
-        } catch {
-          // ignore transient errors during polling
-        }
-      }, 1500);
+        },
+        error: () => {
+          setIsWaiting(false);
+          if (!started) {
+            setMessages(prev => [
+              ...prev,
+              { id: streamId, role: 'assistant', content: '(Something went wrong streaming the reply.)', created_at: new Date().toISOString() },
+            ]);
+          }
+        },
+        complete: () => {
+          setIsWaiting(false);
+          // Reconcile optimistic/streamed bubbles with persisted rows.
+          loadMessages(convId);
+          fetchConversations();
+        },
+      });
     } catch {
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
       setIsWaiting(false);
