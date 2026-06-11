@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { HttpAgent } from '@ag-ui/client';
 import { motion } from 'motion/react';
+import logo from './assets/logo.png';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -436,9 +437,12 @@ export default function App() {
         }
         style={{ width: '224px' }}
       >
-        <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase', marginBottom: '22px' }}>
-          MindForge
-        </span>
+        <div className="flex items-center gap-2" style={{ marginBottom: '22px' }}>
+          <img src={logo} alt="MindForge logo" style={{ height: '26px', width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
+          <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase' }}>
+            MindForge
+          </span>
+        </div>
 
         {/* Page toggles */}
         <div className="flex flex-col gap-2.5 mb-8">
