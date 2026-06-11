@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { HttpAgent } from '@ag-ui/client';
-import { EventType } from '@ag-ui/core';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -320,45 +319,39 @@ export default function App() {
       const agent = new HttpAgent({
         url: `${API}/api/conversations/${convId}/agui`,
         headers: token ? { Authorization: `Bearer ${token}` } : {},
+        // The SDK references global fetch unbound from window; pass a bound
+        // copy or it throws "Illegal invocation" in the browser.
+        fetch: globalThis.fetch.bind(globalThis),
       });
       agent.messages = [{ id: `u-${Date.now()}`, role: 'user', content: text }];
 
+      // runAgent(params, subscriber) returns a Promise; the subscriber's
+      // callbacks fire as events arrive. textMessageBuffer is the running
+      // accumulated assistant text, so we render it directly.
       const streamId = `stream-${Date.now()}`;
-      let acc = '';
       let started = false;
+      const upsertStream = (content) => {
+        if (!started) {
+          started = true;
+          setIsWaiting(false); // first token: swap spinner for live text
+          setMessages(prev => [
+            ...prev,
+            { id: streamId, role: 'assistant', content, created_at: new Date().toISOString() },
+          ]);
+        } else {
+          setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content } : m));
+        }
+      };
 
-      agent.runAgent().subscribe({
-        next: (event) => {
-          if (event.type === EventType.TEXT_MESSAGE_CONTENT) {
-            acc += event.delta || '';
-            if (!started) {
-              started = true;
-              setIsWaiting(false); // first token: swap spinner for live text
-              setMessages(prev => [
-                ...prev,
-                { id: streamId, role: 'assistant', content: acc, created_at: new Date().toISOString() },
-              ]);
-            } else {
-              setMessages(prev => prev.map(m => m.id === streamId ? { ...m, content: acc } : m));
-            }
-          }
-        },
-        error: () => {
-          setIsWaiting(false);
-          if (!started) {
-            setMessages(prev => [
-              ...prev,
-              { id: streamId, role: 'assistant', content: '(Something went wrong streaming the reply.)', created_at: new Date().toISOString() },
-            ]);
-          }
-        },
-        complete: () => {
-          setIsWaiting(false);
-          // Reconcile optimistic/streamed bubbles with persisted rows.
-          loadMessages(convId);
-          fetchConversations();
-        },
+      await agent.runAgent({}, {
+        onTextMessageContentEvent: ({ textMessageBuffer }) => upsertStream(textMessageBuffer),
+        onRunErrorEvent: () => upsertStream('(Something went wrong streaming the reply.)'),
       });
+
+      // Reconcile optimistic/streamed bubbles with persisted rows.
+      setIsWaiting(false);
+      loadMessages(convId);
+      fetchConversations();
     } catch {
       setMessages(prev => prev.filter(m => m.id !== optimistic.id));
       setIsWaiting(false);
