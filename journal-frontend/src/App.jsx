@@ -1,8 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { HttpAgent } from '@ag-ui/client';
+import { motion } from 'motion/react';
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+// Editorial design tokens (from the reference "Design main interface").
+const JOURNAL_BG = [
+  'radial-gradient(ellipse at 4% 96%, rgba(245, 247, 243, 0.7) 0%, transparent 44%)',
+  'radial-gradient(ellipse at 96% 4%, rgba(190, 200, 208, 0.35) 0%, transparent 46%)',
+  'radial-gradient(ellipse at 60% 50%, rgba(200, 205, 205, 0.2) 0%, transparent 60%)',
+  'linear-gradient(140deg, #D4D8D5 0%, #C8CCCC 35%, #C2C6C8 65%, #C8CCCC 100%)',
+].join(', ');
+const SERIF = "'Lora', Georgia, serif";
+const SANS = "'DM Sans', system-ui, sans-serif";
 
 const SUPABASE_CONFIGURED =
   !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -106,15 +117,6 @@ const conversationPreview = (c) => {
   return 'New conversation';
 };
 
-const groupByDate = (conversations) => {
-  const groups = {};
-  for (const c of conversations) {
-    const key = dayLabel(c.started_at);
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(c);
-  }
-  return groups;
-};
 
 export default function App() {
   const [view, setView] = useState('chat');
@@ -332,8 +334,7 @@ export default function App() {
       let started = false;
       const upsertStream = (content) => {
         if (!started) {
-          started = true;
-          setIsWaiting(false); // first token: swap spinner for live text
+          started = true; // first token: the growing serif text replaces the thinking pulse
           setMessages(prev => [
             ...prev,
             { id: streamId, role: 'assistant', content, created_at: new Date().toISOString() },
@@ -365,105 +366,96 @@ export default function App() {
     }
   };
 
-  const grouped = groupByDate(conversations);
-
   if (!authReady) return null;
   if (SUPABASE_CONFIGURED && !session) return <LoginScreen />;
 
+  const navItems = [['chat', 'Chat'], ['dashboard', 'Dashboard'], ['inspect', 'Inspect']];
+
   return (
-    <div className="h-screen flex text-slate-800 font-sans bg-[radial-gradient(circle_at_top_right,_#fed7aa_0%,_#ffffff_60%)]">
-      {/* Sidebar */}
-      <aside className="w-72 bg-slate-50 flex flex-col">
-        <div className="p-5">
-          <h1 className="text-base font-semibold text-slate-900">MindForge</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Talk it through. We'll track the rest.</p>
-        </div>
+    <div className="relative h-screen flex overflow-hidden" style={{ background: JOURNAL_BG, fontFamily: SANS }}>
+      {/* Left sidebar — minimal, editorial */}
+      <aside className="relative z-10 flex flex-col shrink-0 pt-10 pb-8 pl-8 pr-5" style={{ width: '224px' }}>
+        <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase', marginBottom: '22px' }}>
+          MindForge
+        </span>
 
-        <div className="px-3 space-y-3">
-          <button
-            onClick={createConversation}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <span className="text-base leading-none">+</span> New Chat
-          </button>
-          <div className="flex gap-4 px-1 pt-1">
+        {/* Page toggles */}
+        <div className="flex flex-col gap-2.5 mb-8">
+          {navItems.map(([v, label]) => (
             <button
-              onClick={() => setView('chat')}
-              className={`text-xs font-medium pb-1.5 transition-colors ${
-                view === 'chat'
-                  ? 'text-orange-600 border-b border-orange-500'
-                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
-              }`}
+              key={v}
+              onClick={() => setView(v)}
+              className="text-left"
+              style={{
+                fontFamily: SANS, fontSize: '13px',
+                fontWeight: view === v ? 500 : 400,
+                color: view === v ? '#2A2825' : '#9A9790',
+                background: 'transparent', cursor: 'pointer', transition: 'color 0.2s',
+              }}
             >
-              Chat
+              {label}
             </button>
-            <button
-              onClick={() => setView('dashboard')}
-              className={`text-xs font-medium pb-1.5 transition-colors ${
-                view === 'dashboard'
-                  ? 'text-orange-600 border-b border-orange-500'
-                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
-              }`}
-            >
-              Dashboard
-            </button>
-            <button
-              onClick={() => setView('inspect')}
-              className={`text-xs font-medium pb-1.5 transition-colors ${
-                view === 'inspect'
-                  ? 'text-orange-600 border-b border-orange-500'
-                  : 'text-slate-500 hover:text-slate-700 border-b border-transparent'
-              }`}
-            >
-              Inspect
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-3 pt-4 pb-3 space-y-4">
-          {Object.keys(grouped).length === 0 && (
-            <p className="text-xs text-slate-400 px-2">No conversations yet.</p>
-          )}
-          {Object.entries(grouped).map(([label, convs]) => (
-            <div key={label} className="space-y-1">
-              <div className="text-[10px] text-slate-400 font-medium px-2">{label}</div>
-              {convs.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => { setActiveConvId(c.id); setView('chat'); }}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-sm transition-colors ${
-                    activeConvId === c.id && view === 'chat'
-                      ? 'bg-white text-slate-900'
-                      : 'text-slate-600 hover:bg-white/60'
-                  }`}
-                >
-                  <div className="truncate">{conversationPreview(c)}</div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    {c.message_count} msg{c.message_count === 1 ? '' : 's'}
-                  </div>
-                </button>
-              ))}
-            </div>
           ))}
         </div>
 
+        <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#B0AEA8', textTransform: 'uppercase', marginBottom: '12px' }}>
+          Entries
+        </span>
+        <div className="flex flex-col gap-0.5 flex-1 overflow-y-auto no-scrollbar -mr-3 pr-3">
+          {conversations.length === 0 && (
+            <span style={{ fontSize: '12px', color: '#BDB9B2' }}>Nothing yet.</span>
+          )}
+          {conversations.map(c => {
+            const isActive = activeConvId === c.id && view === 'chat';
+            return (
+              <button
+                key={c.id}
+                onClick={() => { setActiveConvId(c.id); setView('chat'); }}
+                className="text-left flex flex-col gap-0.5 py-2"
+                style={{ background: 'transparent', cursor: 'pointer' }}
+              >
+                <span
+                  className="truncate"
+                  style={{ fontSize: '13px', fontWeight: isActive ? 500 : 400, color: isActive ? '#2A2825' : '#9A9790', transition: 'color 0.2s' }}
+                >
+                  {conversationPreview(c)}
+                </span>
+                <span style={{ fontSize: '11px', color: isActive ? '#A8A59E' : '#BDB9B2' }}>
+                  {dayLabel(c.started_at)}
+                </span>
+              </button>
+            );
+          })}
+
+          <button
+            onClick={createConversation}
+            className="text-left"
+            style={{ padding: '8px 0', marginTop: '10px', fontSize: '13px', color: '#C0BDB6', fontFamily: SANS, background: 'transparent', cursor: 'pointer', transition: 'color 0.2s' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#7A7870')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = '#C0BDB6')}
+          >
+            + New entry
+          </button>
+        </div>
+
         {SUPABASE_CONFIGURED && session && (
-          <div className="px-5 py-3 border-t border-slate-200/60 flex items-center justify-between text-xs text-slate-500">
-            <span className="truncate" title={session.user?.email}>{session.user?.email}</span>
-            <button onClick={signOut} className="ml-3 text-slate-700 hover:underline">Sign out</button>
+          <div className="mt-4 pt-3" style={{ borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+            <button onClick={signOut} className="hover:underline" style={{ fontSize: '11px', color: '#9A9790', background: 'transparent', cursor: 'pointer' }}>
+              Sign out
+            </button>
           </div>
         )}
       </aside>
 
       {/* Main */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="relative z-10 flex-1 flex flex-col overflow-hidden">
         {view === 'chat' && (
           <ChatView
             messages={messages}
+            activeConv={conversations.find(c => c.id === activeConvId)}
             input={input}
             setInput={setInput}
             isWaiting={isWaiting}
-            sendMessage={sendMessage}
             handleKeyDown={handleKeyDown}
             messagesEndRef={messagesEndRef}
           />
@@ -471,14 +463,17 @@ export default function App() {
         {view === 'dashboard' && <DashboardView data={dashboard} />}
         {view === 'inspect' && <InspectView />}
       </main>
+
+      {/* Right spacer balances the centered journal column */}
+      {view === 'chat' && <div className="shrink-0" style={{ width: '224px' }} />}
     </div>
   );
 }
 
-function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKeyDown, messagesEndRef }) {
+function ChatView({ messages, activeConv, input, setInput, isWaiting, handleKeyDown, messagesEndRef }) {
   const textareaRef = useRef(null);
 
-  // Auto-grow vertically with content; clamp via CSS max-height.
+  // Auto-grow vertically with content.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -486,83 +481,102 @@ function ChatView({ messages, input, setInput, isWaiting, sendMessage, handleKey
     ta.style.height = `${ta.scrollHeight}px`;
   }, [input]);
 
+  const last = messages[messages.length - 1];
+  // Input shows under the last AI message (or an empty entry). Hidden while a
+  // reply is in flight — the streamed serif text takes its place.
+  const showInput = !isWaiting && (!last || last.role === 'assistant');
+  const thinking = isWaiting && (!last || last.role === 'user');
+
+  useEffect(() => {
+    if (showInput) textareaRef.current?.focus();
+  }, [showInput, activeConv?.id]);
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const COL = { maxWidth: '560px', margin: '0 auto', width: '100%' };
+
   return (
     <>
-      <div className="flex-1 overflow-y-auto px-6 py-7">
-        <div className="max-w-3xl mx-auto space-y-3">
-          {messages.length === 0 && (
-            <div className="text-center text-slate-400 text-sm mt-24">
-              Say anything — how you slept, what you ate, an idea you're sitting on.
-            </div>
-          )}
-          {messages.map(m => (
-            <MessageBubble key={m.id} message={m} />
-          ))}
-          {isWaiting && (
-            <div className="flex justify-start">
-              <div className="bg-slate-50 rounded-2xl px-4 py-3">
-                <TypingDots />
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+      {/* Date header */}
+      <div className="pt-10 flex items-baseline gap-3 px-6" style={COL}>
+        <span style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#9C998F', textTransform: 'uppercase' }}>
+          {today}
+        </span>
+        {activeConv && (
+          <span className="truncate" style={{ fontSize: '11px', letterSpacing: '0.06em', color: '#B4B1A9', textTransform: 'uppercase' }}>
+            · {conversationPreview(activeConv)}
+          </span>
+        )}
       </div>
 
-      <div className="bg-white px-6 py-4">
-        <div className="max-w-3xl mx-auto">
-          <div className="flex items-end gap-2 bg-slate-50 rounded-2xl p-2 focus-within:bg-slate-100 transition-colors">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="What's on your mind?"
-              className="flex-1 bg-transparent resize-none outline-none px-3 py-2 text-sm text-slate-700 placeholder-slate-400 max-h-48 overflow-y-auto"
-              disabled={isWaiting}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!input.trim() || isWaiting}
-              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white text-sm font-medium rounded-xl transition-colors"
-            >
-              Send
-            </button>
-          </div>
-          <p className="text-[10px] text-slate-400 mt-2 text-center">
-            Enter to send · Shift+Enter for newline
-          </p>
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto no-scrollbar pt-10 pb-12 px-6" style={{ width: '100%' }}>
+        <div style={COL}>
+          {messages.length === 0 && !thinking && (
+            <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#8E8B83' }}>
+              What's on your mind?
+            </p>
+          )}
+
+          {messages.map(m => (
+            <JournalMessage key={m.id} message={m} />
+          ))}
+
+          {thinking && (
+            <div className="mb-3" style={{ height: '20px' }}>
+              <motion.span
+                style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '9999px', background: '#8E8B83' }}
+                animate={{ opacity: [0.25, 1, 0.25] }}
+                transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+              />
+            </div>
+          )}
+
+          {/* Inline serif input under the last AI message */}
+          {showInput && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, delay: 0.1 }} className="mt-3">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={1}
+                placeholder="Write here…"
+                className="w-full resize-none outline-none no-scrollbar"
+                style={{ background: 'transparent', border: 'none', fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#38342F', caretColor: '#A8A49C', maxHeight: '45vh' }}
+              />
+              {input === '' && (
+                <p style={{ fontSize: '11px', letterSpacing: '0.06em', color: '#B4B1A9', marginTop: '6px' }}>
+                  Return to send · Shift + return for new line
+                </p>
+              )}
+            </motion.div>
+          )}
+
+          <div ref={messagesEndRef} />
         </div>
       </div>
     </>
   );
 }
 
-function MessageBubble({ message }) {
+function JournalMessage({ message }) {
   const isUser = message.role === 'user';
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[75%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap text-sm leading-relaxed ${
-          isUser
-            ? 'bg-orange-500 text-white'
-            : 'bg-white text-slate-800 border border-slate-100'
-        }`}
-      >
-        {message.content}
-      </div>
-    </div>
-  );
-}
-
-function TypingDots() {
-  return (
-    <div className="flex gap-1 items-center">
-      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-      <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-    </div>
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}>
+      {isUser ? (
+        <div className="flex justify-end mb-8 mt-1">
+          <p style={{ fontFamily: SERIF, fontSize: '18px', fontStyle: 'italic', lineHeight: 1.75, color: '#5C5850', textAlign: 'right', whiteSpace: 'pre-wrap' }}>
+            {message.content}
+          </p>
+        </div>
+      ) : (
+        <div className="mb-6">
+          <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
+            {message.content}
+          </p>
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -695,16 +709,16 @@ function WeeklySummary({ emotional, health, productivity, events }) {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-slate-900">Past 7 Days</h2>
+      <h2 style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase', fontFamily: SANS }}>Past 7 Days</h2>
       <div className="grid grid-cols-3 gap-3">
         {cards.map(({ title, color, stat, sparkline }) => (
-          <div key={title} className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
+          <div key={title} className="bg-white/45 border border-white/50 rounded-xl p-4 space-y-2 backdrop-blur-sm">
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-              <span className="text-xs font-medium text-slate-700">{title}</span>
+              <span className="text-xs font-medium" style={{ color: '#4A4842' }}>{title}</span>
             </div>
             <div className="flex justify-center py-1">{sparkline}</div>
-            <p className="text-[11px] text-slate-500 text-center">{stat}</p>
+            <p className="text-[11px] text-center" style={{ color: '#7A776F' }}>{stat}</p>
           </div>
         ))}
       </div>
