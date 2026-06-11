@@ -73,3 +73,48 @@ def test_run_graph_returns_state_without_reply():
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=%s", (conv,))
         assert cur.fetchone()["n"] == 0
+
+
+def _agui_payload(text: str) -> dict:
+    # AG-UI wire format is camelCase (RunAgentInput aliases).
+    return {
+        "threadId": "t-1",
+        "runId": "r-1",
+        "state": {},
+        "messages": [{"id": "m-1", "role": "user", "content": text}],
+        "tools": [],
+        "context": [],
+        "forwardedProps": {},
+    }
+
+
+def test_agui_endpoint_streams_events_and_persists():
+    from fastapi.testclient import TestClient
+    from app.auth import get_current_user_id
+    import main
+    conv = _seed_conversation(TEST_USER_ID)
+    main.app.dependency_overrides[get_current_user_id] = lambda: TEST_USER_ID
+    try:
+        with patch("app.routers.agui.run_graph", return_value={"intent": "journaling", "sqlite_context": ""}), \
+             patch("app.routers.agui.generate_bot_reply_stream", return_value=iter(["Hi", " Jerry"])):
+            client = TestClient(main.app)
+            body = b""
+            with client.stream("POST", f"/api/conversations/{conv}/agui", json=_agui_payload("hello")) as resp:
+                assert resp.status_code == 200
+                for chunk in resp.iter_bytes():
+                    body += chunk
+    finally:
+        main.app.dependency_overrides.pop(get_current_user_id, None)
+    text = body.decode()
+    assert "RUN_STARTED" in text
+    assert "TEXT_MESSAGE_START" in text
+    assert "TEXT_MESSAGE_CONTENT" in text
+    assert "TEXT_MESSAGE_END" in text
+    assert "RUN_FINISHED" in text
+    # user + assistant rows persisted
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT role, content FROM messages WHERE conversation_id=%s ORDER BY id", (conv,))
+        rows = cur.fetchall()
+    assert [r["role"] for r in rows] == ["user", "assistant"]
+    assert rows[1]["content"] == "Hi Jerry"
