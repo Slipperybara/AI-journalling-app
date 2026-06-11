@@ -6,11 +6,13 @@ import { motion } from 'motion/react';
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 // Editorial design tokens (from the reference "Design main interface").
+// Warm near-white on the lower-left fading to a soft sky-blue-grey on the
+// upper-right — matching the reference background asset's hint of blue.
 const JOURNAL_BG = [
-  'radial-gradient(ellipse at 4% 96%, rgba(245, 247, 243, 0.7) 0%, transparent 44%)',
-  'radial-gradient(ellipse at 96% 4%, rgba(190, 200, 208, 0.35) 0%, transparent 46%)',
-  'radial-gradient(ellipse at 60% 50%, rgba(200, 205, 205, 0.2) 0%, transparent 60%)',
-  'linear-gradient(140deg, #D4D8D5 0%, #C8CCCC 35%, #C2C6C8 65%, #C8CCCC 100%)',
+  'radial-gradient(ellipse at 2% 98%, rgba(243, 242, 238, 0.85) 0%, transparent 52%)',
+  'radial-gradient(ellipse at 100% 0%, rgba(190, 204, 220, 0.42) 0%, transparent 56%)',
+  'radial-gradient(ellipse at 78% 58%, rgba(202, 212, 223, 0.20) 0%, transparent 60%)',
+  'linear-gradient(110deg, #E6E7E4 0%, #DCDFE1 40%, #D1D7DB 70%, #CAD1D8 100%)',
 ].join(', ');
 const SERIF = "'Lora', Georgia, serif";
 const SANS = "'DM Sans', system-ui, sans-serif";
@@ -125,6 +127,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
+  const [morningBrief, setMorningBrief] = useState(null);
   const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
   const messagesEndRef = useRef(null);
 
@@ -183,11 +186,30 @@ export default function App() {
   // Otherwise leave activeConvId null — a new conversation is created lazily
   // on the first send, so the sidebar doesn't show empty 'New Conversation'
   // entries the user never used.
+  //
+  // Also capture today's morning brief — a conversation that opens with an
+  // assistant message (normal chats open with the user). Its text becomes the
+  // blank-slate greeting in the chat instead of the generic prompt.
   useEffect(() => {
     (async () => {
       const list = await fetchConversations();
-      const newest = list[0];
       const todayBucket = bucketKey(new Date());
+
+      const briefConv = list.find(
+        c => bucketKey(c.started_at) === todayBucket && c.first_user_message == null && c.message_count > 0
+      );
+      if (briefConv) {
+        try {
+          const res = await apiFetch(`${API}/api/conversations/${briefConv.id}/messages`);
+          if (res.ok) {
+            const msgs = await res.json();
+            const firstAi = msgs.find(m => m.role === 'assistant');
+            if (firstAi) setMorningBrief(firstAi.content);
+          }
+        } catch { /* non-fatal — fall back to the generic greeting */ }
+      }
+
+      const newest = list[0];
       if (newest && bucketKey(newest.started_at) === todayBucket) {
         setActiveConvId(newest.id);
       }
@@ -453,6 +475,7 @@ export default function App() {
           <ChatView
             messages={messages}
             activeConv={conversations.find(c => c.id === activeConvId)}
+            morningBrief={morningBrief}
             input={input}
             setInput={setInput}
             isWaiting={isWaiting}
@@ -470,7 +493,7 @@ export default function App() {
   );
 }
 
-function ChatView({ messages, activeConv, input, setInput, isWaiting, handleKeyDown, messagesEndRef }) {
+function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiting, handleKeyDown, messagesEndRef }) {
   const textareaRef = useRef(null);
 
   // Auto-grow vertically with content.
@@ -512,8 +535,8 @@ function ChatView({ messages, activeConv, input, setInput, isWaiting, handleKeyD
       <div className="flex-1 overflow-y-auto no-scrollbar pt-10 pb-12 px-6" style={{ width: '100%' }}>
         <div style={COL}>
           {messages.length === 0 && !thinking && (
-            <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#8E8B83' }}>
-              What's on your mind?
+            <p style={{ fontFamily: SERIF, fontSize: '22px', lineHeight: 1.6, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
+              {morningBrief || "What's on your mind?"}
             </p>
           )}
 
