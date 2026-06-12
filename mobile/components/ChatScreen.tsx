@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Animated, FlatList, Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -18,18 +10,52 @@ import {
   streamReply,
   type Message,
 } from '../lib/chat';
+import { fonts } from '../lib/theme';
 
-function Bubble({ message }: { message: Message }) {
-  const isUser = message.role === 'user';
-  return (
-    <View className={`my-1.5 max-w-[85%] ${isUser ? 'self-end' : 'self-start'}`}>
-      <View className={`rounded-2xl px-4 py-2.5 ${isUser ? 'bg-ink' : 'bg-white/70'}`}>
-        <Text className={`text-base leading-6 ${isUser ? 'text-white' : 'text-ink-soft'}`}>
-          {message.content}
-        </Text>
+const userText = {
+  fontFamily: fonts.serifItalic,
+  fontSize: 18,
+  lineHeight: 31,
+  color: '#5C5850',
+  textAlign: 'right' as const,
+};
+const aiText = {
+  fontFamily: fonts.serif,
+  fontSize: 19,
+  lineHeight: 31,
+  color: '#6E6B64',
+};
+
+// Messages are written onto the canvas — no bubbles. User entries sit right,
+// italic; the companion's voice flows left, like the web app.
+function JournalMessage({ message }: { message: Message }) {
+  if (message.role === 'user') {
+    return (
+      <View className="mb-8 mt-1 items-end">
+        <Text style={userText}>{message.content}</Text>
       </View>
+    );
+  }
+  return (
+    <View className="mb-6">
+      <Text style={aiText}>{message.content}</Text>
     </View>
   );
+}
+
+function PulsingDot() {
+  const op = useRef(new Animated.Value(0.25)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(op, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [op]);
+  return <Animated.View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#8E8B83', opacity: op }} />;
 }
 
 export function ChatScreen() {
@@ -67,13 +93,10 @@ export function ChatScreen() {
       setConvId(id);
     }
 
-    const optimistic: Message = {
-      id: `tmp-${Date.now()}`,
-      role: 'user',
-      content: text,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((m) => [...m, optimistic]);
+    setMessages((m) => [
+      ...m,
+      { id: `tmp-${Date.now()}`, role: 'user', content: text, created_at: new Date().toISOString() },
+    ]);
     setSending(true);
     setStreamText('');
     scrollToEnd();
@@ -115,11 +138,9 @@ export function ChatScreen() {
     );
   }
 
-  // The in-flight assistant reply rides at the end of the list so it scrolls
-  // naturally with the conversation.
-  const data: Message[] = sending
-    ? [...messages, { id: '__stream__', role: 'assistant', content: streamText || '…', created_at: '' }]
-    : messages;
+  const today = new Date()
+    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    .toUpperCase();
 
   const canSend = input.trim().length > 0 && !sending;
 
@@ -131,33 +152,59 @@ export function ChatScreen() {
       <FlatList
         ref={listRef}
         className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}
-        data={data}
+        contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 4, paddingBottom: 16 }}
+        data={messages}
         keyExtractor={(m) => String(m.id)}
-        renderItem={({ item }) => <Bubble message={item} />}
+        renderItem={({ item }) => <JournalMessage message={item} />}
         onContentSizeChange={scrollToEnd}
+        ListHeaderComponent={
+          <Text
+            style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.4, color: '#9C998F' }}
+            className="pb-6 pt-1"
+          >
+            {today}
+          </Text>
+        }
         ListEmptyComponent={
-          <Text className="mt-16 text-center text-lg text-muted">What&apos;s on your mind?</Text>
+          !sending ? (
+            <Text style={{ ...aiText, marginTop: 8 }}>What&apos;s on your mind?</Text>
+          ) : null
+        }
+        ListFooterComponent={
+          sending ? (
+            <View className="mb-6 mt-1">
+              {streamText ? <Text style={aiText}>{streamText}</Text> : <PulsingDot />}
+            </View>
+          ) : null
         }
       />
 
       <SafeAreaView edges={['bottom']} className="bg-paper">
-        <View className="flex-row items-end gap-2 border-t border-black/5 px-4 pb-2 pt-3">
+        <View className="flex-row items-end px-5 pb-2 pt-2" style={{ gap: 10 }}>
           <TextInput
-            className="max-h-32 flex-1 rounded-2xl bg-white/70 px-4 py-3 text-base text-ink-soft"
+            className="flex-1"
+            style={{
+              fontFamily: fonts.serif,
+              fontSize: 19,
+              lineHeight: 28,
+              color: '#38342F',
+              maxHeight: 160,
+              paddingVertical: 6,
+            }}
             placeholder="Write here…"
             placeholderTextColor="#B4B1A9"
             value={input}
             onChangeText={setInput}
             multiline
           />
-          <Pressable
-            onPress={send}
-            disabled={!canSend}
-            className={`h-11 w-11 items-center justify-center rounded-full bg-ink ${canSend ? 'active:opacity-80' : 'opacity-40'}`}
-          >
-            <Text className="text-lg text-white">↑</Text>
-          </Pressable>
+          {canSend && (
+            <Pressable
+              onPress={send}
+              className="mb-1 h-9 w-9 items-center justify-center rounded-full bg-ink active:opacity-80"
+            >
+              <Text className="text-base text-white">↑</Text>
+            </Pressable>
+          )}
         </View>
       </SafeAreaView>
     </KeyboardAvoidingView>

@@ -24,6 +24,13 @@ export const gradients = {
   cool: ['#E6E7E4', '#DBDFE2', '#CFD6DC', '#C7D0D9'],
 };
 
-// Font family names — loaded via expo-font in a later step (Lora + DM Sans).
-// Until then, omit fontFamily to fall back to the system font.
-export const fonts = { serif: 'Lora', sans: 'DMSans' };
+// Loaded in App.tsx via expo-font + @expo-google-fonts. Names must match the
+// keys passed to useFonts.
+export const fonts = {
+  serif: 'Lora_400Regular',
+  serifMedium: 'Lora_500Medium',
+  serifItalic: 'Lora_400Regular_Italic',
+  sans: 'DMSans_400Regular',
+  sansMedium: 'DMSans_500Medium',
+  sansLight: 'DMSans_300Light',
+};

@@ -11,7 +11,7 @@ import {
   physicalScore,
   weekdayShort,
 } from '../lib/scoring';
-import { colors } from '../lib/theme';
+import { colors, fonts } from '../lib/theme';
 
 const CHART_H = 88;
 
@@ -33,11 +33,18 @@ function DimensionBars({
   return (
     <View className="mb-7">
       <View className="mb-2 flex-row items-baseline justify-between">
-        <Text className="text-xs uppercase tracking-wider text-muted">{title}</Text>
-        <Text className="text-sm text-ink-soft">
-          <Text className="font-semibold">{headline}</Text>
-          <Text className="text-faint">/100</Text>
-          {subtitle ? <Text className="text-faint">{`   ·  ${subtitle}`}</Text> : null}
+        <Text
+          className="uppercase text-muted"
+          style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.2 }}
+        >
+          {title}
+        </Text>
+        <Text style={{ fontSize: 13, color: '#4A4842' }}>
+          <Text style={{ fontFamily: fonts.sansMedium }}>{headline}</Text>
+          <Text style={{ fontFamily: fonts.sans, color: '#B7B4AD' }}>/100</Text>
+          {subtitle ? (
+            <Text style={{ fontFamily: fonts.sans, color: '#B7B4AD' }}>{`   ·  ${subtitle}`}</Text>
+          ) : null}
         </Text>
       </View>
       <View className="flex-row items-end gap-1.5" style={{ height: CHART_H }}>
@@ -61,7 +68,7 @@ function DimensionBars({
       </View>
       <View className="mt-1 flex-row gap-1.5">
         {days.map((d) => (
-          <Text key={d} className="flex-1 text-center text-faint" style={{ fontSize: 9 }}>
+          <Text key={d} className="flex-1 text-center text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
             {weekdayShort(d)}
           </Text>
         ))}
@@ -76,10 +83,15 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
   return (
     <View className="mb-7">
       <View className="mb-2 flex-row items-baseline justify-between">
-        <Text className="text-xs uppercase tracking-wider text-muted">Journaling streak</Text>
-        <Text className="text-sm text-ink-soft">
-          <Text className="font-semibold">{count}</Text>
-          <Text className="text-faint">/7 days</Text>
+        <Text
+          className="uppercase text-muted"
+          style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.2 }}
+        >
+          Journaling streak
+        </Text>
+        <Text style={{ fontSize: 13, color: '#4A4842' }}>
+          <Text style={{ fontFamily: fonts.sansMedium }}>{count}</Text>
+          <Text style={{ fontFamily: fonts.sans, color: '#B7B4AD' }}>/7 days</Text>
         </Text>
       </View>
       <View className="flex-row gap-1.5">
@@ -93,7 +105,7 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
                 backgroundColor: w.journaled ? colors.journaled : colors.track,
               }}
             />
-            <Text className="mt-1 text-faint" style={{ fontSize: 9 }}>
+            <Text className="mt-1 text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
               {weekdayShort(w.day)}
             </Text>
           </View>
@@ -169,7 +181,12 @@ export function DashboardScreen() {
       }
     >
       {data?.summary ? (
-        <Text className="mb-7 text-base leading-7 text-ink-soft">{data.summary}</Text>
+        <Text
+          className="mb-7"
+          style={{ fontFamily: fonts.serif, fontSize: 17, lineHeight: 27, color: '#56534B' }}
+        >
+          {data.summary}
+        </Text>
       ) : null}
 
       <JournalingTracker week={week} />
