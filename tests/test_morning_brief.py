@@ -73,10 +73,12 @@ def test_post_brief_creates_conversation_and_message():
 
     with connect() as conn:
         log = conn.execute(
-            "SELECT status, conversation_id FROM morning_brief_log WHERE user_id = %s AND day = %s",
+            "SELECT status, conversation_id, brief_text FROM morning_brief_log WHERE user_id = %s AND day = %s",
             (UID, TEST_DAY),
         ).fetchone()
         assert log["status"] == "posted"
+        # The brief text is persisted so the live bot can reuse it as a recap.
+        assert log["brief_text"] == "Good morning. Yesterday felt steady. How are you doing today?"
         msgs = conn.execute(
             "SELECT role, content FROM messages WHERE user_id = %s AND conversation_id = %s",
             (UID, log["conversation_id"]),

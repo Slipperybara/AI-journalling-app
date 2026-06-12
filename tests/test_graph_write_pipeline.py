@@ -163,6 +163,45 @@ def test_write_event_creates_involves_edge():
     assert set(result["topics"]) == {"testing", "pipeline"}
 
 
+def test_write_event_links_topics_from_tags_without_event_topics():
+    """Regression: an event with `tags` but NO event_topics rows must still
+    produce INVOLVES edges to Topic nodes derived from its tags. This is the
+    June-5+ scenario where the LLM populated `tags` but emitted empty `topics`,
+    leaving lifestyle/health/social events with zero topic links."""
+    from app.graph_batch import _write_day_node, _write_event
+    from unittest.mock import MagicMock
+
+    event = MagicMock()
+    event.__getitem__ = lambda self, key: {
+        "title": "Tag Sourced Event",
+        "event_type": "milestone",
+        "description": "has tags but no event_topics rows",
+        "tags": "social, leisure",
+    }[key]
+
+    with graph_connect() as session:
+        _clear_test_day(session, TEST_DAY)
+        _write_day_node(session, TEST_DAY, None, TEST_USER_ID)
+        # empty topics_by_event — exactly what an event with no event_topics row produces
+        _write_event(session, TEST_DAY, event, {}, {}, TEST_USER_ID)
+        result = session.run("""
+            MATCH (d:Day {user_id: $user_id, date: $day})
+                  -[:HAD_EVENT]->(e:Event {user_id: $user_id})
+                  -[:INVOLVES]->(t:Topic {user_id: $user_id})
+            RETURN collect(t.name) AS topics
+        """, user_id=UID, day=TEST_DAY).single()
+        session.run(
+            "MATCH (e:Event {user_id: $user_id, title: 'Tag Sourced Event'}) DETACH DELETE e",
+            user_id=UID,
+        )
+        session.run(
+            "MATCH (t:Topic {user_id: $user_id}) WHERE t.name IN ['social','leisure'] DETACH DELETE t",
+            user_id=UID,
+        )
+
+    assert set(result["topics"]) == {"social", "leisure"}
+
+
 def test_maintenance_merges_duplicate_events():
     from app.graph_maintenance import _deduplicate_events
 

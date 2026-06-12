@@ -1,18 +1,22 @@
 """The live chatbot.
 
-The bot is the only LLM call per user message after this refactor — there is
-no inline structured extraction. The bot's context is:
+The bot is the only LLM call per user message — there is no inline structured
+extraction. Its purpose is to be an empathetic conversation partner with memory
+of recent days. Context:
   - today's raw transcript (all today-bucket conversations, chronological);
-  - the last 3 days of parsed rows;
-  - the 7-day aggregate summary;
-  - all still-open todos from prior days.
+  - the previous 2 days of full conversation (fresh memory);
+  - the 5 days before that as warm morning-brief recaps (longer memory);
+  - soft coverage awareness of the six tracked dimensions (NOT a checklist).
 
 System-prompt priorities (in order when they conflict):
-  1. Conversationalist — answer questions directly, don't deflect.
-  2. Empathetic listener — reflect what the user shared. Surface any todos /
-     events spotted in the reply itself (no DB writes here — those happen in
-     the nightly batch).
-  3. Gentle interviewer — at most one uncovered-dimension nudge per reply.
+  1. Empathetic listener — reflect and validate feelings; make the user feel
+     heard. This is the primary job.
+  2. Open-up guide — at most one gentle, open-ended question that invites the
+     user to share more of themselves; often skipped entirely.
+  3. Informed advisor / Q&A — answer direct questions; when a GRAPH_DIGEST is
+     present, give accurate, actionable advice grounded in the user's history.
+  4. Organic capture — sleep/diet/etc. are tracked quietly; never interrogate.
+     Structured extraction still happens only in the nightly batch.
 """
 import json
 import re
@@ -118,25 +122,17 @@ def _detect_covered_dimensions(transcript: list[dict]) -> set[str]:
     }
 
 
-ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm but goal-directed journaling companion. Your PRIMARY job is to gather the user's data across six daily dimensions so the nightly parser has enough signal. You are NOT a free-form chatbot; you are an interviewer disguised as a friendly conversation.
+ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm, empathetic companion. Your PRIMARY purpose is to make the user feel genuinely heard and a little better for having talked with you. You are a caring conversation partner, not an interviewer and not a form.
 
-PRIORITIES (in no order):
-  1. INTERVIEWER (primary). Every reply SHOULD include exactly one question (nudge) about an uncovered dimension — UNLESS all six are already covered today. Re-read TODAY_TRANSCRIPT, determine which dimensions remain uncovered, and pick ONE. CYCLE deliberately: if the user dodged or deflected the previous dimension question, switch to a DIFFERENT uncovered dimension this turn. Never re-ask a dimension already asked twice today.
-  2. LISTENER. Acknowledge what the user said and dive deeper into the topic if necessary before the nudge. Introduce the nudge naturally if possible, if not, use a more direct and purposeful acknowledgement eg ."By the way, I would also like to know... so that I can keep an record and analyse your performance/emotion better"
-  3. Q&A. If the user asked you a direct question, answer it as a expert of the domain, then pivot back to your dimension nudge. Answering does NOT replace the nudge — both happen in the same reply.
+PRIORITIES (in order when they conflict):
+  1. EMPATHETIC LISTENER (primary). Read what the user is really saying and how they feel underneath it. Reflect it back, name it gently, and stay with the emotion before anything else. Don't rush to fix, advise, or redirect. Let your replies breathe — go longer when the moment is heavy or they're opening up; stay brief when they're light.
+  2. OPEN-UP GUIDE. When it would help them go deeper, ask AT MOST ONE gentle, open-ended question that invites them to share more of themselves — their feelings, what's behind something, what mattered to them. Never a checklist question. Often the most caring move is to ask nothing and simply be present — skip the question whenever one would intrude on the moment.
+  3. INFORMED ADVISOR / Q&A (secondary). If the user asks you something directly, answer it well, as a knowledgeable friend. When a GRAPH_DIGEST appears below, use it to give accurate, consolidated information and concrete, actionable advice grounded in the user's own history. Advice is welcome when it's wanted — but it never replaces listening.
+  4. ORGANIC CAPTURE (lowest). MindForge quietly keeps track of six things for the user's own long-term reflection: sleep, exercise, diet, deep-work, emotional state, and the day's events. NEVER interrogate for these. Only when the user has paused, or a dimension comes up naturally, may you RARELY ask one light question about it — and only if it doesn't cut against the emotional moment. When in doubt, don't.
 
-THE SIX DIMENSIONS and what counts as "covered today" (be permissive — any mention counts):
-  - Sleep — quality, hours, dreams, tiredness on waking. ("slept badly" counts.)
-  - Exercise — any physical activity, OR explicit "didn't work out today". ("walked to office" counts.)
-  - Diet — anything eaten or drunk. ("skipped lunch" or "coffee only" counts.)
-  - Deep-work hours — focused work mentioned, even vaguely ("got two hours of writing in", "couldn't focus all morning").
-  - Emotional state — how the user feels, broadly. Their tone alone is NOT enough; they should name a feeling, energy level, or stressor.
-  - Day's events — anything they did, an idea they had, a place they went, media they consumed, milestones.
-
-COVERAGE_TODAY (pre-computed by keyword scan of the user's messages today — TRUST THIS over manually scanning the transcript):
+COVERAGE_TODAY (which of the six the user has already touched today — soft awareness ONLY, not a checklist to complete):
   Covered: {covered_today}
-  Uncovered: {uncovered_today}
-Pick your dimension question from Uncovered. If Uncovered is empty, all six dimensions are touched and you may skip the dimension nudge for this reply. If you think the pre-computed coverage is wrong for a specific dimension (e.g. the keyword matched but the user didn't really discuss it), you may override — but default to trusting it.
+  Not yet mentioned: {uncovered_today}
 
 GOAL TOOLS (when to call them):
   - `add_goal(name)`: ONLY after the user explicitly confirms they want a goal tracked. When the user mentions a long-term aim ("I want to train for a marathon", "I'm going to focus on Jane Street prep"), FIRST ask in conversation whether to track it — do NOT call add_goal yet. If on a later turn they confirm ("yes please", "yeah track it"), THEN call add_goal. The 3-active cap is enforced server-side; if the call returns an error about the cap, tell the user they need to fulfill or remove a goal first.
@@ -146,139 +142,64 @@ GOAL TOOLS (when to call them):
   After a tool call, generate ONE user-facing reply acknowledging what changed in plain prose. Do not list the tool result verbatim.
 
 REPLY STYLE:
-  - Varuing length depending on topic. No bullets, headings, markdown, or emoji.
-  - Plain prose, empathetic conversational tone. Don't sound like a form.
-  - Reference patterns from RECENT_DAYS or SUMMARY_7DAY when natural ("third day this week you've mentioned poor sleep — anything changed in your evenings?").
-  - If the user is clearly venting hard, you may defer the dimension questions — ask it in the next message.
+  - Variable length — longer when they're opening up or hurting, shorter when they're light. No bullets, headings, markdown, or emoji.
+  - Plain, warm prose. Sound like a person who cares, not a coach or a form.
+  - You remember recent days (RECENT_TRANSCRIPTS, DAILY_SUMMARIES). Reference them naturally when it shows you've been listening ("you mentioned yesterday that…") — but only when it deepens the connection, never to show off recall.
 
 CONTEXT YOU HAVE:
 
-TODAY_TRANSCRIPT (all user + assistant messages so far in today's day-bucket, chronological — use this to determine which dimensions are uncovered):
+TODAY_TRANSCRIPT (all of today's messages so far, chronological):
 {today_transcript}
 
-RECENT_DAYS (parsed data from the last 3 days — reference for patterns):
-{recent_days_json}
+RECENT_TRANSCRIPTS (full conversations from the previous 2 days — your fresh memory, oldest first):
+{recent_transcripts}
 
-SUMMARY_7DAY:
-{summary_json}
+DAILY_SUMMARIES (warm recaps of the days before that — your longer memory, newest first):
+{daily_summaries}
 
 {graph_facts_block}"""
 
 
 def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
-    uid = str(user_id)
+    """Assemble the empathetic bot's conversational memory:
+      - today's full transcript;
+      - the previous 2 days of full conversation (fresh memory, oldest first);
+      - the 5 days before that as morning-brief recaps (longer memory);
+      - soft coverage awareness of the six tracked dimensions.
+    """
+    # Lazy import: morning_brief imports store_assistant_message from this
+    # module, so a top-level import here would be circular.
+    from .morning_brief import get_daily_summaries
+
     now = now or datetime.now()
-    today_iso = bucket_for(now).isoformat()
-    recent_cutoff = (bucket_for(now) - timedelta(days=3)).isoformat()
-    seven_back = (bucket_for(now) - timedelta(days=7)).isoformat()
+    today = bucket_for(now)
+    today_iso = today.isoformat()
 
-    today_transcript: list[dict] = []
-    recent_days: dict[str, list] = {"emotional": [], "health": [], "productivity": [], "events": []}
-    summary: dict = {}
+    today_transcript = [
+        {"at": r["created_at"], "role": r["role"], "content": r["content"]}
+        for r in get_messages_for_day(today_iso, user_id)
+    ]
 
-    with connect() as conn:
-        cursor = conn.cursor()
-
-        today_transcript = [
-            {"at": r["created_at"], "role": r["role"], "content": r["content"]}
-            for r in get_messages_for_day(today_iso, user_id)
+    # Previous 2 days of full conversation, ordered oldest → newest so the
+    # model reads them as a timeline leading up to today.
+    recent_transcripts: list[dict] = []
+    for back in (2, 1):
+        day_iso = (today - timedelta(days=back)).isoformat()
+        msgs = [
+            {"role": r["role"], "content": r["content"]}
+            for r in get_messages_for_day(day_iso, user_id)
         ]
+        if msgs:
+            recent_transcripts.append({"day": day_iso, "messages": msgs})
 
-        cursor.execute("""
-            SELECT day, valence, arousal, primary_quadrant,
-                   cognitive_labels, cognitive_triggers, social_interactions
-            FROM emotional_analysis
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
-            ORDER BY day DESC
-        """, (uid, recent_cutoff, today_iso))
-        for r in cursor.fetchall():
-            recent_days["emotional"].append({
-                "day": r["day"],
-                "valence": r["valence"],
-                "arousal": r["arousal"],
-                "primary_quadrant": r["primary_quadrant"],
-                "cognitive_labels": (r["cognitive_labels"] or []),
-                "cognitive_triggers": (r["cognitive_triggers"] or []),
-                "social_interactions": (r["social_interactions"] or []),
-            })
-
-        cursor.execute("""
-            SELECT day, sleep_quality, exercise_type, diet_quality,
-                   somatic_sensations, physical_performance, supplements
-            FROM health_metrics
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
-            ORDER BY day DESC
-        """, (uid, recent_cutoff, today_iso))
-        for r in cursor.fetchall():
-            recent_days["health"].append({
-                "day": r["day"],
-                "sleep_quality": r["sleep_quality"],
-                "exercise_type": r["exercise_type"],
-                "diet_quality": r["diet_quality"],
-                "somatic_sensations": (r["somatic_sensations"] or []),
-                "physical_performance": r["physical_performance"],
-                "supplements": (r["supplements"] or []),
-            })
-
-        cursor.execute("""
-            SELECT day, deep_work_hours, shallow_work_hours,
-                   time_block_adherence, cognitive_load, friction_points
-            FROM productivity_metrics
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
-            ORDER BY day DESC
-        """, (uid, recent_cutoff, today_iso))
-        for r in cursor.fetchall():
-            recent_days["productivity"].append({
-                "day": r["day"],
-                "deep_work_hours": r["deep_work_hours"],
-                "shallow_work_hours": r["shallow_work_hours"],
-                "time_block_adherence": r["time_block_adherence"],
-                "cognitive_load": r["cognitive_load"],
-                "friction_points": (r["friction_points"] or []),
-            })
-
-        cursor.execute("""
-            SELECT day, title, description, tags, event_type
-            FROM events
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s AND day < %s
-            ORDER BY day DESC, id DESC
-        """, (uid, recent_cutoff, today_iso))
-        recent_days["events"] = [dict(r) for r in cursor.fetchall()]
-
-        cursor.execute("""
-            SELECT AVG(valence) v, AVG(arousal) a, COUNT(*) n
-            FROM emotional_analysis
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
-        """, (uid, seven_back))
-        row = cursor.fetchone()
-        summary["emotional_7day"] = {
-            "avg_valence": round(row["v"], 2) if row["v"] is not None else None,
-            "avg_arousal": round(row["a"], 2) if row["a"] is not None else None,
-            "samples": row["n"],
-        }
-
-        cursor.execute("""
-            SELECT primary_quadrant q, COUNT(*) n
-            FROM emotional_analysis
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
-            GROUP BY primary_quadrant
-        """, (uid, seven_back))
-        summary["quadrant_counts_7day"] = {r["q"]: r["n"] for r in cursor.fetchall() if r["q"]}
-
-        cursor.execute("""
-            SELECT event_type, COUNT(*) n
-            FROM events
-            WHERE user_id = %s AND day IS NOT NULL AND day >= %s
-            GROUP BY event_type
-        """, (uid, seven_back))
-        summary["events_7day"] = {r["event_type"]: r["n"] for r in cursor.fetchall() if r["event_type"]}
+    daily_summaries = get_daily_summaries(today_iso, user_id, num_days=5)
 
     covered = _detect_covered_dimensions(today_transcript)
     all_dims = set(DIMENSION_KEYWORDS.keys())
     return {
         "today_transcript": today_transcript,
-        "recent_days": recent_days,
-        "summary_7day": summary,
+        "recent_transcripts": recent_transcripts,
+        "daily_summaries": daily_summaries,
         "covered_today": sorted(covered),
         "uncovered_today": sorted(all_dims - covered),
     }
@@ -330,10 +251,19 @@ def _build_reply_messages(
             + "\n"
         )
 
+    recent_transcripts_str = (
+        json.dumps(ctx["recent_transcripts"], indent=2, default=str)
+        if ctx["recent_transcripts"] else "(no conversation in the previous 2 days)"
+    )
+    daily_summaries_str = (
+        json.dumps(ctx["daily_summaries"], indent=2, default=str)
+        if ctx["daily_summaries"] else "(no earlier recaps yet)"
+    )
+
     system = ASSISTANT_SYSTEM_TMPL.format(
-        today_transcript=json.dumps(ctx["today_transcript"], indent=2),
-        recent_days_json=json.dumps(ctx["recent_days"], indent=2),
-        summary_json=json.dumps(ctx["summary_7day"], indent=2),
+        today_transcript=json.dumps(ctx["today_transcript"], indent=2, default=str),
+        recent_transcripts=recent_transcripts_str,
+        daily_summaries=daily_summaries_str,
         covered_today=covered_display,
         uncovered_today=uncovered_display,
         graph_facts_block=graph_facts_block,

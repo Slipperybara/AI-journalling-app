@@ -2,9 +2,12 @@
 
 Runs after the nightly batch (or via the admin endpoint) per user. Creates a
 fresh conversation in today's bucket for the user and inserts a warm assistant
-message that greets them, summarizes yesterday, surfaces one notable 7-day
-pattern if any, lightly references active goals, and offers one grounded
-suggestion — then ends with "How are you doing today?".
+message: an empathetic recap of yesterday that reflects what happened and how
+they seemed to feel, with optional light touches on a 7-day pattern, goal
+momentum, or a single caring suggestion — then ends with "How are you feeling
+today?". The brief text is persisted to `morning_brief_log.brief_text` so the
+live bot can reuse each day's recap as a per-day summary in its conversational
+memory (see `get_daily_summaries`).
 
 Idempotent via `morning_brief_log` keyed on `(user_id, day)`. Cron, catch-up
 sweeps, and manual admin re-triggers all collapse into a single posting per
@@ -51,7 +54,7 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
     if context.get("is_brand_new_user"):
         brief = _generate_welcome_for_new_user()
         conv_id = _post_to_conversation(brief, day, user_id)
-        _log(day, status="skipped_empty", conversation_id=conv_id, user_id=user_id)
+        _log(day, status="skipped_empty", conversation_id=conv_id, user_id=user_id, brief_text=brief)
         return {"status": "skipped_empty", "day": day, "conversation_id": conv_id}
 
     try:
@@ -69,7 +72,7 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
         _log(day, status="failed", conversation_id=0, user_id=user_id, error=str(exc))
         return {"status": "failed", "day": day, "error": str(exc)}
 
-    _log(day, status="posted", conversation_id=conv_id, user_id=user_id)
+    _log(day, status="posted", conversation_id=conv_id, user_id=user_id, brief_text=brief)
     return {"status": "posted", "day": day, "conversation_id": conv_id}
 
 
@@ -253,22 +256,30 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are MindForge writing the user's morning brief — the first "
-                    "message they see when they open the app today. Write a single, "
-                    "warm, conversational message:\n\n"
+                    "You are MindForge writing the user's morning message — the first "
+                    "thing they see when they open the app today. Its heart is a warm, "
+                    "empathetic recap of yesterday: you remember what they went through "
+                    "and how they seemed to feel, and you reflect it back so they feel "
+                    "seen. This same text is reused later as your memory of that day, so "
+                    "make the recap genuinely capture what mattered.\n\n"
+                    "Write a single, warm, conversational message:\n"
                     "1. Open with 'Good morning' or a natural variant — one sentence.\n"
-                    "2. Summarize yesterday in 1-2 sentences grounded in the actual "
-                    "data. If is_sparse_yesterday=true, say so kindly and skip to step 5.\n"
-                    "3. If seven_day_pattern is non-empty, mention it in one sentence.\n"
-                    "4. If active_goals show momentum or stalled status worth noting, "
-                    "mention ONE lightly.\n"
-                    "5. Offer ONE concrete, specific suggestion for today, grounded "
-                    "in the data — not generic advice. Skip this step if the data is "
-                    "too sparse to justify it.\n"
-                    "6. End with the literal line: How are you doing today?\n\n"
-                    "Style: 4-7 sentences total. Plain prose. No bullets, no markdown, "
-                    "no headings, no emoji. Empathetic, not preachy. Skip steps 3-5 if "
-                    "the data doesn't justify them — better brief and warm than padded."
+                    "2. Recap yesterday in 2-4 sentences grounded in the actual data — "
+                    "what happened and, gently, how they seemed to feel. Reflect and "
+                    "validate rather than report. If is_sparse_yesterday=true, say warmly "
+                    "that you don't have much from yesterday and skip to step 5.\n"
+                    "3. OPTIONAL: if seven_day_pattern is non-empty AND genuinely worth a "
+                    "gentle mention, weave it in one sentence. Otherwise omit.\n"
+                    "4. OPTIONAL: if an active goal's momentum is genuinely worth noting, "
+                    "mention ONE lightly and warmly. Otherwise omit.\n"
+                    "5. OPTIONAL: only if it arises naturally from the recap, offer ONE "
+                    "small, caring suggestion for today. Skip it freely — do NOT force "
+                    "advice. Better warm than prescriptive.\n"
+                    "6. End with the literal line: How are you feeling today?\n\n"
+                    "Style: 3-6 sentences total. Plain prose. No bullets, no markdown, "
+                    "no headings, no emoji. Empathetic and unhurried, never preachy or "
+                    "form-like. The optional steps are optional — lead with warmth and "
+                    "presence, not analysis."
                 ),
             },
             {
@@ -286,7 +297,7 @@ def _generate_welcome_for_new_user() -> str:
         "Good morning. I'm MindForge — your space to talk through your day, "
         "track your goals, and notice the patterns that shape how you feel "
         "and work. There's no data to look back on yet, which means we get "
-        "to start fresh together. How are you doing today?"
+        "to start fresh together. How are you feeling today?"
     )
 
 
@@ -305,17 +316,73 @@ def _post_to_conversation(brief_text: str, day: str, user_id: UUID) -> int:
     return conv_id
 
 
-def _log(day: str, status: str, conversation_id: int, user_id: UUID, error: Optional[str] = None) -> None:
+def _log(
+    day: str,
+    status: str,
+    conversation_id: int,
+    user_id: UUID,
+    error: Optional[str] = None,
+    brief_text: Optional[str] = None,
+) -> None:
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO morning_brief_log (user_id, day, posted_at, conversation_id, status, error)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO morning_brief_log (user_id, day, posted_at, conversation_id, status, error, brief_text)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id, day) DO UPDATE SET
                 posted_at = excluded.posted_at,
                 conversation_id = excluded.conversation_id,
                 status = excluded.status,
-                error = excluded.error
+                error = excluded.error,
+                brief_text = excluded.brief_text
             """,
-            (str(user_id), day, datetime.now().isoformat(), conversation_id, status, error),
+            (str(user_id), day, datetime.now().isoformat(), conversation_id, status, error, brief_text),
         )
+
+
+def get_daily_summaries(today: str, user_id: UUID, num_days: int = 5) -> list[dict]:
+    """Return the last `num_days` morning-brief recaps for the live bot's
+    conversational memory, newest first.
+
+    A brief posted on day P recaps day P-1, so each returned recap is labeled
+    with the day it actually covers (`recaps`). The window is the briefs posted
+    on [today-(num_days+1) .. today-2], which cover days [today-(num_days+2) ..
+    today-3] — i.e. the days just *before* the 2 full-transcript days the bot
+    already carries, so there is no overlap.
+
+    Fallback for rows written before `brief_text` existed: read the brief from
+    the logged conversation's first assistant message. Days with neither are
+    skipped.
+    """
+    uid = str(user_id)
+    today_date = datetime.fromisoformat(today).date()
+    newest_post = (today_date - timedelta(days=2)).isoformat()   # recaps today-3
+    oldest_post = (today_date - timedelta(days=num_days + 1)).isoformat()
+
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT day, conversation_id, brief_text
+            FROM morning_brief_log
+            WHERE user_id = %s AND status = 'posted'
+              AND day >= %s AND day <= %s
+            ORDER BY day DESC
+            """,
+            (uid, oldest_post, newest_post),
+        ).fetchall()
+
+        summaries: list[dict] = []
+        for r in rows:
+            text = (r["brief_text"] or "").strip()
+            if not text and r["conversation_id"]:
+                first = conn.execute(
+                    "SELECT content FROM messages WHERE user_id = %s AND conversation_id = %s "
+                    "AND role = 'assistant' ORDER BY id ASC LIMIT 1",
+                    (uid, r["conversation_id"]),
+                ).fetchone()
+                text = (first["content"].strip() if first and first["content"] else "")
+            if not text:
+                continue
+            recaps = (datetime.fromisoformat(r["day"]).date() - timedelta(days=1)).isoformat()
+            summaries.append({"recaps": recaps, "summary": text})
+    return summaries

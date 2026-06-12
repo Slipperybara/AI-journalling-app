@@ -115,6 +115,11 @@ def init_db() -> None:
                 PRIMARY KEY (user_id, day)
             )
         """)
+        # Additive: the brief text is persisted so the live bot can reuse each
+        # day's recap as a per-day "summary" in its conversational memory.
+        cursor.execute(
+            "ALTER TABLE morning_brief_log ADD COLUMN IF NOT EXISTS brief_text TEXT"
+        )
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (

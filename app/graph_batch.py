@@ -272,13 +272,23 @@ def _write_event(session, day: str, event, topics_by_event: dict, goals_by_event
         description=event["description"] or "", tags=tags, day=day,
     )
 
-    for topic in topics_by_event.get(event["title"], []):
+    # Topic links come from two LLM-extracted sources, unioned: the conceptual
+    # `topics` field (event_topics rows — precise but only populated for events
+    # with a "clear intellectual or skill domain") and the near-universal `tags`
+    # field. Sourcing from tags too ensures lifestyle/health/social events still
+    # get Topic nodes instead of floating disconnected. MERGE keeps it idempotent
+    # and dedups overlap; graph_maintenance later categorises every Topic.
+    topic_names = {t.lower().strip() for t in tags if t.strip()}
+    topic_names.update(
+        t.lower().strip() for t in topics_by_event.get(event["title"], []) if t.strip()
+    )
+    for name in topic_names:
         session.run("""
             MERGE (t:Topic {user_id: $user_id, name: $name})
             WITH t
             MATCH (e:Event {user_id: $user_id, canonical_id: $cid})
             MERGE (e)-[:INVOLVES]->(t)
-        """, user_id=uid, name=topic.lower().strip(), cid=cid)
+        """, user_id=uid, name=name, cid=cid)
 
     for goal_name in goals_by_event.get(event["title"], []):
         # Strict MATCH: only this user's active goals accumulate new
