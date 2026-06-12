@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useAuth } from '../lib/auth';
 import {
   createConversation,
   getMessages,
@@ -34,7 +33,6 @@ function Bubble({ message }: { message: Message }) {
 }
 
 export function ChatScreen() {
-  const { signOut } = useAuth();
   const [convId, setConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,9 +109,9 @@ export function ChatScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-paper">
+      <View className="flex-1 items-center justify-center bg-paper">
         <ActivityIndicator color="#8E8B84" />
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -126,33 +124,24 @@ export function ChatScreen() {
   const canSend = input.trim().length > 0 && !sending;
 
   return (
-    <SafeAreaView className="flex-1 bg-paper" edges={['top']}>
-      <View className="flex-row items-center justify-between px-5 pb-3 pt-1">
-        <Text className="text-lg font-semibold text-ink">MindForge</Text>
-        <Pressable onPress={signOut} hitSlop={8}>
-          <Text className="text-sm text-muted">Sign out</Text>
-        </Pressable>
-      </View>
-
-      <KeyboardAvoidingView
+    <KeyboardAvoidingView
+      className="flex-1 bg-paper"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <FlatList
+        ref={listRef}
         className="flex-1"
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <FlatList
-          ref={listRef}
-          className="flex-1"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}
-          data={data}
-          keyExtractor={(m) => String(m.id)}
-          renderItem={({ item }) => <Bubble message={item} />}
-          onContentSizeChange={scrollToEnd}
-          ListEmptyComponent={
-            <Text className="mt-16 text-center text-lg text-muted">
-              What&apos;s on your mind?
-            </Text>
-          }
-        />
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}
+        data={data}
+        keyExtractor={(m) => String(m.id)}
+        renderItem={({ item }) => <Bubble message={item} />}
+        onContentSizeChange={scrollToEnd}
+        ListEmptyComponent={
+          <Text className="mt-16 text-center text-lg text-muted">What&apos;s on your mind?</Text>
+        }
+      />
 
+      <SafeAreaView edges={['bottom']} className="bg-paper">
         <View className="flex-row items-end gap-2 border-t border-black/5 px-4 pb-2 pt-3">
           <TextInput
             className="max-h-32 flex-1 rounded-2xl bg-white/70 px-4 py-3 text-base text-ink-soft"
@@ -170,7 +159,7 @@ export function ChatScreen() {
             <Text className="text-lg text-white">↑</Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
