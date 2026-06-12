@@ -7,6 +7,7 @@
     "@supabase/supabase-js": "^2.108.1",
     "babel-preset-expo": "~56.0.0",
     "expo": "~56.0.11",
+    "expo-dev-client": "~56.0.20",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "nativewind": "^4.2.5",
