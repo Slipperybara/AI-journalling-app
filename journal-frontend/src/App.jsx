@@ -772,6 +772,48 @@ function ChatView({ messages, messagesLoading, activeConv, morningBrief, input, 
   );
 }
 
+// Lightweight markdown for the companion's voice — mirrors mobile/components/
+// Markdown.tsx: **bold**, *italics*, ==highlight==, and "- " bullets.
+const MD_INLINE = /(\*\*[^*]+\*\*|==[^=]+==|\*[^*\n]+\*|_[^_\n]+_)/g;
+function mdInline(text, keyBase) {
+  const out = [];
+  let last = 0, i = 0, m;
+  MD_INLINE.lastIndex = 0;
+  while ((m = MD_INLINE.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0], key = `${keyBase}-${i++}`;
+    if (tok.startsWith('**')) out.push(<strong key={key} style={{ fontWeight: 600 }}>{tok.slice(2, -2)}</strong>);
+    else if (tok.startsWith('==')) out.push(<span key={key} style={{ background: 'rgba(224,137,79,0.20)', borderRadius: '2px', padding: '0 2px' }}>{tok.slice(2, -2)}</span>);
+    else out.push(<em key={key}>{tok.slice(1, -1)}</em>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function MarkdownBody({ content, style }) {
+  const blocks = [];
+  let para = [], bullets = null, k = 0;
+  const flushPara = () => {
+    if (!para.length) return;
+    blocks.push(<p key={`p-${k++}`} style={{ ...style, whiteSpace: 'pre-wrap', margin: blocks.length ? '10px 0 0' : 0 }}>{mdInline(para.join('\n'), `p-${k}`)}</p>);
+    para = [];
+  };
+  const flushBullets = () => {
+    if (!bullets) return;
+    blocks.push(<ul key={`u-${k++}`} style={{ ...style, margin: blocks.length ? '6px 0 0' : 0, paddingLeft: '20px' }}>{bullets}</ul>);
+    bullets = null;
+  };
+  content.split('\n').forEach((line, idx) => {
+    const b = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (b) { flushPara(); if (!bullets) bullets = []; bullets.push(<li key={`li-${idx}`}>{mdInline(b[1], `li-${idx}`)}</li>); }
+    else if (line.trim() === '') { flushPara(); flushBullets(); }
+    else { flushBullets(); para.push(line); }
+  });
+  flushPara(); flushBullets();
+  return <>{blocks}</>;
+}
+
 function JournalMessage({ message }) {
   const isUser = message.role === 'user';
   return (
@@ -784,9 +826,7 @@ function JournalMessage({ message }) {
         </div>
       ) : (
         <div className="mb-6">
-          <p style={{ fontFamily: SERIF, fontSize: '19px', lineHeight: 1.65, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
-            {message.content}
-          </p>
+          <MarkdownBody content={message.content} style={{ fontFamily: SERIF, fontSize: '19px', lineHeight: 1.65, color: '#6E6B64' }} />
         </div>
       )}
     </motion.div>

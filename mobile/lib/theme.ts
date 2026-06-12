@@ -32,6 +32,7 @@ export const gradients = {
 export const fonts = {
   serif: 'Lora_400Regular',
   serifMedium: 'Lora_500Medium',
+  serifSemiBold: 'Lora_600SemiBold',
   serifItalic: 'Lora_400Regular_Italic',
   sans: 'DMSans_400Regular',
   sansMedium: 'DMSans_500Medium',

@@ -11,6 +11,7 @@ import {
   type Message,
 } from '../lib/chat';
 import { fonts } from '../lib/theme';
+import { Markdown } from './Markdown';
 
 const userText = {
   fontFamily: fonts.serifItalic,
@@ -38,7 +39,7 @@ function JournalMessage({ message }: { message: Message }) {
   }
   return (
     <View className="mb-6">
-      <Text style={aiText}>{message.content}</Text>
+      <Markdown content={message.content} style={aiText} />
     </View>
   );
 }
@@ -173,7 +174,7 @@ export function ChatScreen() {
         ListFooterComponent={
           sending ? (
             <View className="mb-6 mt-1">
-              {streamText ? <Text style={aiText}>{streamText}</Text> : <PulsingDot />}
+              {streamText ? <Markdown content={streamText} style={aiText} /> : <PulsingDot />}
             </View>
           ) : null
         }

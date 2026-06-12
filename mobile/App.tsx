@@ -2,7 +2,12 @@ import './global.css';
 import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
-import { Lora_400Regular, Lora_500Medium, Lora_400Regular_Italic } from '@expo-google-fonts/lora';
+import {
+  Lora_400Regular,
+  Lora_500Medium,
+  Lora_600SemiBold,
+  Lora_400Regular_Italic,
+} from '@expo-google-fonts/lora';
 import { DMSans_300Light, DMSans_400Regular, DMSans_500Medium } from '@expo-google-fonts/dm-sans';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -27,6 +32,7 @@ export default function App() {
   const [fontsLoaded] = useFonts({
     Lora_400Regular,
     Lora_500Medium,
+    Lora_600SemiBold,
     Lora_400Regular_Italic,
     DMSans_300Light,
     DMSans_400Regular,
