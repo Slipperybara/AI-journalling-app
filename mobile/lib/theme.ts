@@ -12,9 +12,12 @@ export const colors = {
   line: 'rgba(0,0,0,0.06)',
   track: '#ECEAE5',
   emotional: '#E0894F',
-  physical: '#6E9B7A',
-  focus: '#6E86C4',
+  exercise: '#6E86C4',
   journaled: '#6E9B7A',
+  // Distinct tinted card behind the journaling streak so it reads apart from
+  // the analytics bars.
+  card: 'rgba(110, 134, 196, 0.07)',
+  cardBorder: 'rgba(110, 134, 196, 0.18)',
 };
 
 // Warm (conversing) and cool (retrieval) ambient gradient stops — used later

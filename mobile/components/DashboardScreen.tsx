@@ -2,15 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react-native';
 
 import { getDashboard, type DashboardData } from '../lib/dashboard';
-import {
-  avg,
-  emotionalScore,
-  fmtScore,
-  FOCUS_TARGET_HOURS,
-  last7Days,
-  physicalScore,
-  weekdayShort,
-} from '../lib/scoring';
+import { avg, emotionalScore, fmtScore, last7Days, physicalScore, weekdayShort } from '../lib/scoring';
 import { colors, fonts } from '../lib/theme';
 
 const CHART_H = 88;
@@ -81,7 +73,7 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
   const days = week.length ? week : last7Days().map((d) => ({ day: d, journaled: false }));
   const count = days.filter((w) => w.journaled).length;
   return (
-    <View className="mb-7">
+    <View>
       <View className="mb-2 flex-row items-baseline justify-between">
         <Text
           className="uppercase text-muted"
@@ -153,16 +145,6 @@ export function DashboardScreen() {
     const s = physicalScore(r);
     if (s != null) physByDay[r.day] = s;
   });
-  const focusByDay: Record<string, number> = {};
-  const focusHoursByDay: Record<string, number> = {};
-  data?.productivity.forEach((r) => {
-    if (r.deep_work_hours != null) {
-      focusByDay[r.day] = Math.min(r.deep_work_hours / FOCUS_TARGET_HOURS, 1) * 100;
-      focusHoursByDay[r.day] = r.deep_work_hours;
-    }
-  });
-
-  const focusHoursAvg = avg(days.map((d) => focusHoursByDay[d]));
 
   return (
     <ScrollView
@@ -189,7 +171,18 @@ export function DashboardScreen() {
         </Text>
       ) : null}
 
-      <JournalingTracker week={week} />
+      <View
+        style={{
+          backgroundColor: colors.card,
+          borderColor: colors.cardBorder,
+          borderWidth: 1,
+          borderRadius: 16,
+          padding: 16,
+          marginBottom: 28,
+        }}
+      >
+        <JournalingTracker week={week} />
+      </View>
 
       <DimensionBars
         title="Emotional health"
@@ -199,19 +192,11 @@ export function DashboardScreen() {
         headline={fmtScore(avg(days.map((d) => emoByDay[d])))}
       />
       <DimensionBars
-        title="Physical health"
-        color={colors.physical}
+        title="Exercise"
+        color={colors.exercise}
         days={days}
         scoreByDay={physByDay}
         headline={fmtScore(avg(days.map((d) => physByDay[d])))}
-      />
-      <DimensionBars
-        title="Focus"
-        color={colors.focus}
-        days={days}
-        scoreByDay={focusByDay}
-        headline={fmtScore(avg(days.map((d) => focusByDay[d])))}
-        subtitle={focusHoursAvg != null ? `${focusHoursAvg.toFixed(1)}h/day avg` : undefined}
       />
     </ScrollView>
   );
