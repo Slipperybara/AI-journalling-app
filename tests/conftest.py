@@ -28,6 +28,7 @@ _TABLES_TO_RESET = (
     "parse_log",
     "morning_brief_log",
     "dashboard_summary",
+    "device_tokens",
     "emotional_analysis",
     "health_metrics",
     "productivity_metrics",

@@ -131,6 +131,19 @@ def init_db() -> None:
             )
         """)
 
+        # Push-notification device tokens (one row per device per user). The
+        # native app registers its Expo push token here; the nightly batch
+        # reads them to send the morning-brief push.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS device_tokens (
+                user_id UUID NOT NULL,
+                token TEXT NOT NULL,
+                platform TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, token)
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (
                 id BIGSERIAL PRIMARY KEY,

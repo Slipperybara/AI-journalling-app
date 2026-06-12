@@ -6,7 +6,7 @@ from app import scheduler
 from app.core import settings
 from app.db import close_pool, init_db
 from app.graph_db import close as graph_close, init_graph
-from app.routers import admin, agui, conversations, dashboard, goals, messages
+from app.routers import admin, agui, conversations, dashboard, devices, goals, messages, stream
 
 
 app = FastAPI(title="MindForge AI")
@@ -27,6 +27,8 @@ init_graph()
 app.include_router(conversations.router)
 app.include_router(messages.router)
 app.include_router(agui.router)
+app.include_router(stream.router)
+app.include_router(devices.router)
 app.include_router(dashboard.router)
 app.include_router(admin.router)
 app.include_router(goals.router)
