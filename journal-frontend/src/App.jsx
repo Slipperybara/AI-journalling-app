@@ -75,26 +75,6 @@ function LoginScreen() {
   );
 }
 
-const getQuadrantBadgeColor = (q) => {
-  switch (q) {
-    case 'Peak Performance': return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-    case 'High-Stress': return 'bg-rose-100 text-rose-800 border-rose-200';
-    case 'Low-Energy': return 'bg-amber-100 text-amber-800 border-amber-200';
-    case 'Recovery & Clarity': return 'bg-sky-100 text-sky-800 border-sky-200';
-    default: return 'bg-slate-100 text-slate-800 border-slate-200';
-  }
-};
-
-const eventTypeColor = (t) => {
-  switch (t) {
-    case 'idea': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    case 'milestone': return 'bg-amber-50 text-amber-700 border-amber-200';
-    case 'location': return 'bg-sky-50 text-sky-700 border-sky-200';
-    case 'media': return 'bg-purple-50 text-purple-700 border-purple-200';
-    default: return 'bg-slate-50 text-slate-700 border-slate-200';
-  }
-};
-
 const dayLabel = (iso) => {
   // Bare YYYY-MM-DD is anchored to local noon so timezone offsets can't push it into the prior day.
   const input = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso;
@@ -162,12 +142,13 @@ export default function App() {
   const [conversations, setConversations] = useState([]);
   const [activeConvId, setActiveConvId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [input, setInput] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
   const [morningBrief, setMorningBrief] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [bgMode, setBgMode] = useState('warm'); // 'warm' (conversing) | 'cool' (retrieving)
-  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] } });
+  const [dashboard, setDashboard] = useState({ emotional: [], health: [], productivity: [], events: [], goals: { active: [], fulfilled: [], candidate: [] }, summary: '', journaling_week: [] });
   const messagesEndRef = useRef(null);
 
   // Auth state. When Supabase isn't configured, treat the app as ready
@@ -255,10 +236,19 @@ export default function App() {
     })();
   }, [fetchConversations]);
 
-  // Whenever active conv changes, load its messages
+  // Whenever active conv changes, load its messages. Flag the in-flight fetch
+  // so the chat panel can show a loading state; `cancelled` guards against a
+  // fast switch resolving out of order. The skeleton itself is suppressed
+  // during a send (isWaiting) so the optimistic bubble isn't hidden.
   useEffect(() => {
     if (activeConvId == null) return;
-    (async () => { await loadMessages(activeConvId); })();
+    let cancelled = false;
+    (async () => {
+      setMessagesLoading(true);
+      await loadMessages(activeConvId);
+      if (!cancelled) setMessagesLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [activeConvId, loadMessages]);
 
   // Auto-scroll on new message
@@ -458,7 +448,7 @@ export default function App() {
   if (!authReady) return null;
   if (SUPABASE_CONFIGURED && !session) return <LoginScreen />;
 
-  const navItems = [['chat', 'Chat'], ['dashboard', 'Dashboard'], ['inspect', 'Inspect']];
+  const navItems = [['chat', 'Chat'], ['dashboard', 'Dashboard']];
 
   return (
     <div className="relative h-screen flex overflow-hidden" style={{ background: BG_WARM, fontFamily: SANS }}>
@@ -511,6 +501,24 @@ export default function App() {
           ))}
         </div>
 
+        {/* New chat — primary action, sits above the entries history. */}
+        <button
+          onClick={() => { createConversation(); setView('chat'); setSidebarOpen(false); }}
+          className="text-left flex items-center gap-2 rounded-md"
+          style={{
+            marginLeft: '-9px', marginBottom: '20px', padding: '8px 10px',
+            fontFamily: SANS, fontSize: '13px', fontWeight: 500, color: '#5E5B54',
+            background: 'transparent', cursor: 'pointer', transition: 'background 0.2s, color 0.2s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.045)'; e.currentTarget.style.color = '#2A2825'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#5E5B54'; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New chat
+        </button>
+
         <span style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#B0AEA8', textTransform: 'uppercase', marginBottom: '12px' }}>
           Entries
         </span>
@@ -528,16 +536,6 @@ export default function App() {
               onDelete={deleteConversation}
             />
           ))}
-
-          <button
-            onClick={() => { createConversation(); setSidebarOpen(false); }}
-            className="text-left"
-            style={{ padding: '8px 0', marginTop: '10px', fontSize: '13px', color: '#C0BDB6', fontFamily: SANS, background: 'transparent', cursor: 'pointer', transition: 'color 0.2s' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#7A7870')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = '#C0BDB6')}
-          >
-            + New entry
-          </button>
         </div>
 
         {SUPABASE_CONFIGURED && session && (
@@ -567,6 +565,7 @@ export default function App() {
           {view === 'chat' && (
             <ChatView
               messages={messages}
+              messagesLoading={messagesLoading}
               activeConv={conversations.find(c => c.id === activeConvId)}
               morningBrief={morningBrief}
               input={input}
@@ -577,7 +576,6 @@ export default function App() {
             />
           )}
           {view === 'dashboard' && <DashboardView data={dashboard} />}
-          {view === 'inspect' && <InspectView />}
         </ViewErrorBoundary>
       </main>
 
@@ -655,7 +653,32 @@ function SidebarEntry({ conv, isActive, onOpen, onRename, onDelete }) {
   );
 }
 
-function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiting, handleKeyDown, messagesEndRef }) {
+// Restrained shimmer panel shown while a conversation's messages load from the
+// backend. Mimics a couple of message blocks so the layout doesn't jump.
+const SKELETON_LINES = [
+  { w: '34%', mb: '12px' },
+  { w: '90%', mb: '12px' },
+  { w: '78%', mb: '22px' },
+  { w: '28%', mb: '12px' },
+  { w: '86%', mb: '12px' },
+  { w: '62%', mb: '12px' },
+];
+
+function MessagesSkeleton() {
+  return (
+    <div role="status" aria-busy="true" aria-label="Loading conversation" style={{ paddingTop: '4px' }}>
+      {SKELETON_LINES.map((l, i) => (
+        <div
+          key={i}
+          className="animate-pulse"
+          style={{ height: '13px', width: l.w, borderRadius: '6px', background: 'rgba(120,116,108,0.12)', marginBottom: l.mb }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ChatView({ messages, messagesLoading, activeConv, morningBrief, input, setInput, isWaiting, handleKeyDown, messagesEndRef }) {
   const textareaRef = useRef(null);
 
   // Auto-grow vertically with content.
@@ -671,6 +694,9 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
   // reply is in flight — the streamed serif text takes its place.
   const showInput = !isWaiting && (!last || last.role === 'assistant');
   const thinking = isWaiting && (!last || last.role === 'user');
+  // Show the loading panel only for genuine conversation loads — never during a
+  // send (isWaiting), where the optimistic bubble should stay visible.
+  const loading = messagesLoading && !isWaiting;
 
   useEffect(() => {
     if (showInput) textareaRef.current?.focus();
@@ -696,17 +722,19 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
       {/* Messages */}
       <div className="flex-1 overflow-y-auto no-scrollbar pt-10 pb-12 pl-16 pr-6 md:px-6" style={{ width: '100%' }}>
         <div style={COL}>
-          {messages.length === 0 && !thinking && (
+          {loading && <MessagesSkeleton />}
+
+          {!loading && messages.length === 0 && !thinking && (
             <p style={{ fontFamily: SERIF, fontSize: '19px', lineHeight: 1.65, color: '#6E6B64', whiteSpace: 'pre-wrap' }}>
               {morningBrief || "What's on your mind?"}
             </p>
           )}
 
-          {messages.map(m => (
+          {!loading && messages.map(m => (
             <JournalMessage key={m.id} message={m} />
           ))}
 
-          {thinking && (
+          {!loading && thinking && (
             <div className="mb-3" style={{ height: '20px' }}>
               <motion.span
                 style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '9999px', background: '#8E8B83' }}
@@ -717,7 +745,7 @@ function ChatView({ messages, activeConv, morningBrief, input, setInput, isWaiti
           )}
 
           {/* Inline serif input under the last AI message */}
-          {showInput && (
+          {!loading && showInput && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, delay: 0.1 }} className="mt-3">
               <textarea
                 ref={textareaRef}
@@ -766,12 +794,45 @@ function JournalMessage({ message }) {
 }
 
 function DashboardView({ data }) {
-  const { emotional, health, productivity, events, goals: initialGoals } = data;
+  const {
+    emotional = [], health = [], productivity = [],
+    goals: initialGoals, summary, journaling_week = [],
+  } = data;
+
+  // The journaling tracker defines the canonical 7-day axis (proper 6am
+  // buckets from the backend); the bars look up scores against the same days.
+  const days = journaling_week.length ? journaling_week.map(w => w.day) : last7Days();
+
+  const emoByDay = {};
+  emotional.forEach(r => { const s = emotionalScore(r.valence, r.arousal); if (s != null) emoByDay[r.day] = s; });
+  const physByDay = {};
+  health.forEach(r => { const s = physicalScore(r); if (s != null) physByDay[r.day] = s; });
+  const focusByDay = {}, focusHoursByDay = {};
+  productivity.forEach(r => {
+    if (r.deep_work_hours != null) {
+      focusByDay[r.day] = Math.min(r.deep_work_hours / FOCUS_TARGET_HOURS, 1) * 100;
+      focusHoursByDay[r.day] = r.deep_work_hours;
+    }
+  });
+
+  const emoAvg = avg(days.map(d => emoByDay[d]));
+  const physAvg = avg(days.map(d => physByDay[d]));
+  const focusAvg = avg(days.map(d => focusByDay[d]));
+  const focusHoursAvg = avg(days.map(d => focusHoursByDay[d]));
+
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-7 space-y-8">
-      <div className="max-w-5xl mx-auto space-y-8">
+    <div className="flex-1 overflow-y-auto px-8 py-7">
+      <div className="max-w-4xl mx-auto space-y-7">
         <GoalsStrip initialGoals={initialGoals} />
-        <WeeklySummary emotional={emotional} health={health} productivity={productivity} events={events} />
+        <SummarySentence text={summary} />
+        <JournalingTracker week={journaling_week} days={days} />
+        <DimensionBars title="Emotional health" color="#E0894F" days={days} scoreByDay={emoByDay} headline={fmtScore(emoAvg)} />
+        <DimensionBars title="Physical health" color="#6E9B7A" days={days} scoreByDay={physByDay} headline={fmtScore(physAvg)} />
+        <DimensionBars
+          title="Focus" color="#6E86C4" days={days} scoreByDay={focusByDay}
+          headline={fmtScore(focusAvg)}
+          subtitle={focusHoursAvg != null ? `${focusHoursAvg.toFixed(1)}h/day avg` : null}
+        />
       </div>
     </div>
   );
@@ -800,66 +861,40 @@ function GoalsStrip({ initialGoals }) {
   );
 }
 
-
-
+// ── Dashboard scoring (mirrors app/dashboard_summary.py) ─────────────────────
+// Everything is scored out of 100 for consistency.
 const SLEEP_MAP = { 'Poor': 0, 'Fair': 0.33, 'Good': 0.67, 'Excellent': 1 };
 const DIET_MAP = { 'Junk/Heavy': 0, 'Carbs Centered': 0.25, 'Meat and Vegetable centered': 0.6, 'Clean': 1 };
+const EXERCISE_MAP = { 'None': 0, 'Light Cardio': 0.5, 'Light Strength': 0.5, 'Heavy Cardio': 1, 'Heavy Strength': 1 };
+// A focused, sustainable deep-work day. 4h maps to a full focus score of 100.
+const FOCUS_TARGET_HOURS = 4;
 
-function SparkPolyline({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
-  const pts = days.map((d, i) => {
-    const v = byDay[d];
-    if (v == null) return null;
-    const x = (i / Math.max(days.length - 1, 1)) * W;
-    const y = H - ((v + 1) / 2) * H;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).filter(Boolean);
-  return (
-    <svg width={W} height={H} className="overflow-visible">
-      <line x1="0" y1={H / 2} x2={W} y2={H / 2} stroke="#f1f5f9" strokeWidth="1" />
-      {pts.length >= 2 && (
-        <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
-      )}
-      {pts.length < 2 && pts.map((p, i) => {
-        const [cx, cy] = p.split(',');
-        return <circle key={i} cx={cx} cy={cy} r="2" fill={color} />;
-      })}
-    </svg>
-  );
+// Emotional 0-100: (valence+arousal)/2 mapped from [-1,1] → [0,100]. Neutral = 50.
+function emotionalScore(valence, arousal) {
+  if (valence == null && arousal == null) return null;
+  const v = valence ?? 0, a = arousal ?? 0;
+  return ((v + a) / 2 + 1) / 2 * 100;
 }
 
-function SparkBars({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
-  const vals = days.map(d => byDay[d] ?? null);
-  const maxVal = Math.max(...vals.filter(v => v != null), 1);
-  const bw = Math.max(1, W / days.length - 2);
-  return (
-    <svg width={W} height={H}>
-      {vals.map((v, i) => {
-        const barH = v != null ? Math.max(2, (v / maxVal) * H) : 0;
-        return (
-          <rect key={i} x={i * (W / days.length)} y={H - barH}
-            width={bw} height={barH} fill={v != null ? color : '#e2e8f0'} rx="1" />
-        );
-      })}
-    </svg>
-  );
+// Physical 0-100: mean of whichever of sleep / exercise-intensity / diet are present.
+function physicalScore(r) {
+  const parts = [];
+  if (r.sleep_quality in SLEEP_MAP) parts.push(SLEEP_MAP[r.sleep_quality]);
+  if (r.exercise_type in EXERCISE_MAP) parts.push(EXERCISE_MAP[r.exercise_type]);
+  if (r.diet_quality in DIET_MAP) parts.push(DIET_MAP[r.diet_quality]);
+  if (!parts.length) return null;
+  return parts.reduce((s, v) => s + v, 0) / parts.length * 100;
 }
 
-function SparkDots({ days, byDay, W = 100, H = 32, color = '#f97316' }) {
-  return (
-    <svg width={W} height={H}>
-      {days.map((d, i) => {
-        const v = byDay[d];
-        const cx = (i + 0.5) * (W / days.length);
-        const cy = H / 2;
-        const r = v != null ? 3 + v * 4 : 2.5;
-        return <circle key={d} cx={cx} cy={cy} r={r} fill={v != null ? color : '#e2e8f0'} />;
-      })}
-    </svg>
-  );
+function avg(vals) {
+  const nums = vals.filter(v => v != null);
+  return nums.length ? nums.reduce((s, v) => s + v, 0) / nums.length : null;
 }
 
-function WeeklySummary({ emotional, health, productivity, events }) {
-  const last7 = Array.from({ length: 7 }, (_, i) => {
+function fmtScore(v) { return v == null ? '—' : Math.round(v).toString(); }
+
+function last7Days() {
+  return Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
     const y = d.getFullYear();
@@ -867,43 +902,47 @@ function WeeklySummary({ emotional, health, productivity, events }) {
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   });
+}
 
-  const emotByDay = Object.fromEntries(emotional.map(r => [r.day, r.valence]));
-  const sleepByDay = Object.fromEntries(health.filter(r => r.sleep_quality).map(r => [r.day, SLEEP_MAP[r.sleep_quality] ?? null]));
-  const exerciseByDay = Object.fromEntries(health.filter(r => r.exercise_type).map(r => [r.day, r.exercise_type !== 'None' ? 1 : 0]));
-  const dietByDay = Object.fromEntries(health.filter(r => r.diet_quality).map(r => [r.day, DIET_MAP[r.diet_quality] ?? null]));
-  const deepByDay = Object.fromEntries(productivity.filter(r => r.deep_work_hours != null).map(r => [r.day, r.deep_work_hours]));
-  const eventCountByDay = {};
-  events.forEach(e => { eventCountByDay[e.day] = (eventCountByDay[e.day] || 0) + 1; });
+// Compact weekday label for the 7-day axis (anchored to local noon so the date
+// can't slip across a timezone boundary). Distinct from the verbose `dayLabel`.
+function weekdayShort(iso) {
+  const input = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00` : iso;
+  return new Date(input).toLocaleDateString('en-US', { weekday: 'short' });
+}
 
-  const avgValence = emotional.length ? (emotional.reduce((s, r) => s + r.valence, 0) / emotional.length).toFixed(2) : '—';
-  const sleepDays = health.filter(r => r.sleep_quality).length;
-  const exerciseDays = health.filter(r => r.exercise_type && r.exercise_type !== 'None').length;
-  const dietDays = health.filter(r => r.diet_quality).length;
-  const totalDeep = productivity.reduce((s, r) => s + (r.deep_work_hours || 0), 0).toFixed(1);
-  const totalEvents = events.length;
-
-  const cards = [
-    { title: 'Emotional', color: '#f97316', stat: `avg ${avgValence > 0 ? '+' : ''}${avgValence}`, sparkline: <SparkPolyline days={last7} byDay={emotByDay} color="#f97316" /> },
-    { title: 'Sleep', color: '#f43f5e', stat: `${sleepDays}/7 days`, sparkline: <SparkDots days={last7} byDay={sleepByDay} color="#f43f5e" /> },
-    { title: 'Exercise', color: '#10b981', stat: `${exerciseDays}/7 days`, sparkline: <SparkBars days={last7} byDay={exerciseByDay} color="#10b981" /> },
-    { title: 'Diet', color: '#f59e0b', stat: `${dietDays}/7 days`, sparkline: <SparkDots days={last7} byDay={dietByDay} color="#f59e0b" /> },
-    { title: 'Deep Work', color: '#3b82f6', stat: `${totalDeep}h total`, sparkline: <SparkBars days={last7} byDay={deepByDay} color="#3b82f6" /> },
-    { title: 'Events', color: '#8b5cf6', stat: `${totalEvents} total`, sparkline: <SparkBars days={last7} byDay={eventCountByDay} color="#8b5cf6" /> },
-  ];
-
+// ── Dashboard presentation ───────────────────────────────────────────────────
+function SummarySentence({ text }) {
+  if (!text) return null;
   return (
-    <section className="space-y-3">
-      <h2 style={{ fontSize: '10px', letterSpacing: '0.14em', color: '#8E8B84', textTransform: 'uppercase', fontFamily: SANS }}>Past 7 Days</h2>
-      <div className="grid grid-cols-3 gap-3">
-        {cards.map(({ title, color, stat, sparkline }) => (
-          <div key={title} className="bg-white/45 border border-white/50 rounded-xl p-4 space-y-2 backdrop-blur-sm">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-              <span className="text-xs font-medium" style={{ color: '#4A4842' }}>{title}</span>
-            </div>
-            <div className="flex justify-center py-1">{sparkline}</div>
-            <p className="text-[11px] text-center" style={{ color: '#7A776F' }}>{stat}</p>
+    <p style={{ fontFamily: SERIF, fontSize: '17px', lineHeight: 1.6, color: '#56534B' }}>
+      {text}
+    </p>
+  );
+}
+
+function JournalingTracker({ week, days }) {
+  const list = week && week.length ? week : days.map(d => ({ day: d, journaled: false }));
+  const count = list.filter(w => w.journaled).length;
+  return (
+    <section className="space-y-2">
+      <div className="flex items-baseline justify-between">
+        <span style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#8E8B84', textTransform: 'uppercase', fontFamily: SANS }}>
+          Journaling streak
+        </span>
+        <span style={{ fontFamily: SANS, fontSize: '13px', color: '#4A4842' }}>
+          <span style={{ fontWeight: 600 }}>{count}</span>
+          <span style={{ color: '#A8A49C' }}>/7 days</span>
+        </span>
+      </div>
+      <div className="flex gap-1.5">
+        {list.map(w => (
+          <div key={w.day} className="flex-1 flex flex-col items-center gap-1">
+            <div
+              title={`${w.day}${w.journaled ? ' · journaled' : ''}`}
+              style={{ width: '100%', height: '30px', borderRadius: '6px', background: w.journaled ? '#6E9B7A' : '#ECEAE5', transition: 'background 0.3s' }}
+            />
+            <span style={{ fontSize: '9px', color: '#B7B4AD', fontFamily: SANS }}>{weekdayShort(w.day)}</span>
           </div>
         ))}
       </div>
@@ -911,352 +950,39 @@ function WeeklySummary({ emotional, health, productivity, events }) {
   );
 }
 
-function EmptyMsg({ children }) {
-  return <p className="text-xs text-slate-400 py-1">{children}</p>;
-}
-
-function InspectView() {
-  const [days, setDays] = useState([]);
-  const [selectedDay, setSelectedDay] = useState('');
-  const [data, setData] = useState(null);
-  const [reparsing, setReparsing] = useState(false);
-  const [evalResult, setEvalResult] = useState(null);
-  const [evalLoading, setEvalLoading] = useState(false);
-
-  const loading = !!selectedDay && (!data || data.day !== selectedDay);
-
-  const loadDay = useCallback(async (day) => {
-    if (!day) return;
-    let result = null;
-    try {
-      const res = await apiFetch(`${API}/api/admin/inspect/${day}`);
-      if (res.ok) result = await res.json();
-    } catch {
-      // swallow — `result` stays null and UI shows empty state
-    }
-    setData(result);
-    setEvalResult(null);
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      const res = await apiFetch(`${API}/api/admin/inspect/days`);
-      if (!res.ok) return;
-      const list = await res.json();
-      setDays(list);
-      if (list.length > 0) {
-        setSelectedDay((prev) => prev || list[0].day);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedDay) return;
-    (async () => { await loadDay(selectedDay); })();
-  }, [selectedDay, loadDay]);
-
-  const reparseDay = async () => {
-    if (!selectedDay || reparsing) return;
-    setReparsing(true);
-    try {
-      await apiFetch(`${API}/api/admin/parse-day/${selectedDay}`, { method: 'POST' });
-      await loadDay(selectedDay);
-    } finally {
-      setReparsing(false);
-    }
-  };
-
-  const runEval = async () => {
-    if (!selectedDay || evalLoading) return;
-    setEvalLoading(true);
-    try {
-      const res = await apiFetch(`${API}/api/admin/eval/${selectedDay}`, { method: 'POST' });
-      setEvalResult(await res.json());
-    } catch {
-      setEvalResult({ error: 'eval call failed' });
-    } finally {
-      setEvalLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex-1 overflow-y-auto px-8 py-7">
-      <div className="max-w-7xl mx-auto space-y-5">
-        <header className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-slate-900">Inspect</h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Raw chat next to parsed extractions, for verifying parse quality day by day.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedDay}
-              onChange={(e) => setSelectedDay(e.target.value)}
-              className="text-sm bg-white border border-slate-200 rounded-md px-2 py-1.5"
-            >
-              {days.length === 0 && <option value="">No days with messages</option>}
-              {days.map((d) => (
-                <option key={d.day} value={d.day}>
-                  {d.day} ({d.message_count} msg{d.message_count === 1 ? '' : 's'})
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={reparseDay}
-              disabled={!selectedDay || reparsing}
-              className="text-xs px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-200 text-white rounded-md transition-colors"
-            >
-              {reparsing ? 'Reparsing…' : 'Re-parse this day'}
-            </button>
-          </div>
-        </header>
-
-        {loading && <p className="text-sm text-slate-400">Loading…</p>}
-
-        {!loading && data && (
-          <>
-            <ParseLogBadge log={data.parse_log} window={data.bucket_window} />
-            <div className="grid grid-cols-2 gap-6">
-              <TranscriptColumn messages={data.messages} />
-              <ExtractionsColumn
-                extractions={data.extractions}
-                onEval={runEval}
-                evalLoading={evalLoading}
-                evalResult={evalResult}
-              />
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ParseLogBadge({ log, window }) {
-  const status = log?.status ?? 'none';
-  const tone = {
-    succeeded: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    empty: 'bg-slate-50 text-slate-600 border-slate-200',
-    failed: 'bg-rose-50 text-rose-700 border-rose-200',
-    none: 'bg-amber-50 text-amber-700 border-amber-200',
-  }[status];
-  return (
-    <div className="flex items-center justify-between text-xs">
-      <div className="flex items-center gap-3">
-        <span className={`px-2 py-0.5 rounded border font-medium ${tone}`}>
-          parse_log: {status}
-        </span>
-        {log?.parsed_at && (
-          <span className="text-slate-400">parsed at {new Date(log.parsed_at).toLocaleString()}</span>
-        )}
-        {log?.error && (
-          <span className="text-rose-600 truncate max-w-xl">error: {log.error}</span>
-        )}
-      </div>
-      {window && (
-        <span className="text-slate-400">
-          window: {new Date(window.start).toLocaleString()} → {new Date(window.end).toLocaleString()}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function TranscriptColumn({ messages }) {
+// Full-width per-day bar chart for one dimension. One bar per day, scored 0-100.
+function DimensionBars({ title, color, days, scoreByDay, headline, subtitle }) {
   return (
     <section className="space-y-2">
-      <h3 className="font-medium text-slate-900 text-sm">Raw transcript ({messages.length})</h3>
-      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto pr-2">
-        {messages.length === 0 && <EmptyMsg>No messages in this day-bucket.</EmptyMsg>}
-        {messages.map((m, i) => {
-          const prev = messages[i - 1];
-          const convBreak = prev && prev.conversation_id !== m.conversation_id;
+      <div className="flex items-baseline justify-between">
+        <span style={{ fontSize: '11px', letterSpacing: '0.12em', color: '#8E8B84', textTransform: 'uppercase', fontFamily: SANS }}>
+          {title}
+        </span>
+        <span style={{ fontFamily: SANS, fontSize: '13px', color: '#4A4842' }}>
+          <span style={{ fontWeight: 600 }}>{headline}</span>
+          <span style={{ color: '#A8A49C' }}>/100</span>
+          {subtitle && <span style={{ color: '#A8A49C', marginLeft: '8px' }}>· {subtitle}</span>}
+        </span>
+      </div>
+      <div className="flex items-end gap-1.5 w-full" style={{ height: '88px' }}>
+        {days.map(d => {
+          const v = scoreByDay[d];
+          const has = v != null;
           return (
-            <div key={m.id}>
-              {convBreak && (
-                <div className="flex items-center gap-2 py-2">
-                  <div className="flex-1 h-px bg-slate-200" />
-                  <span className="text-[10px] text-slate-400">new conversation</span>
-                  <div className="flex-1 h-px bg-slate-200" />
-                </div>
-              )}
-              <TranscriptMessage m={m} />
+            <div key={d} className="flex-1 flex items-end justify-center h-full"
+                 title={has ? `${weekdayShort(d)}: ${Math.round(v)}/100` : `${d}: no data`}>
+              <div style={{ width: '100%', height: has ? `${Math.max(4, v)}%` : '4%', background: has ? color : '#ECEAE5', borderRadius: '5px 5px 2px 2px', transition: 'height 0.4s ease' }} />
             </div>
           );
         })}
       </div>
-    </section>
-  );
-}
-
-function TranscriptMessage({ m }) {
-  const isUser = m.role === 'user';
-  const roleClass = isUser
-    ? 'bg-slate-100 text-slate-700 border-slate-200'
-    : 'bg-orange-50 text-orange-700 border-orange-200';
-  return (
-    <div className="border border-slate-200 bg-white rounded-md p-3 space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${roleClass}`}>
-          {m.role}
-        </span>
-        <span className="text-[10px] text-slate-400 font-mono">
-          {new Date(m.created_at).toLocaleString()} · #{m.id}
-        </span>
-      </div>
-      <p className="text-sm text-slate-800 whitespace-pre-wrap leading-relaxed">{m.content}</p>
-    </div>
-  );
-}
-
-function ExtractionsColumn({ extractions, onEval, evalLoading, evalResult }) {
-  const { emotional, health, productivity, events = [] } = extractions || {};
-  return (
-    <section className="space-y-3">
-      <h3 className="font-medium text-slate-900 text-sm">Extractions</h3>
-      <div className="space-y-3 max-h-[calc(100vh-220px)] overflow-y-auto pr-2">
-        <ExtractionCard title="Emotional">
-          {emotional ? <EmotionalDetail r={emotional} /> : <NotExtracted />}
-        </ExtractionCard>
-        <ExtractionCard title="Health">
-          {health ? <HealthDetail r={health} /> : <NotExtracted />}
-        </ExtractionCard>
-        <ExtractionCard title="Productivity">
-          {productivity ? <ProductivityDetail r={productivity} /> : <NotExtracted />}
-        </ExtractionCard>
-        <ExtractionCard title={`Events (${events.length})`}>
-          {events.length === 0 ? <NotExtracted /> : (
-            <div className="space-y-2">
-              {events.map((e) => (
-                <div key={e.id} className="border-t border-slate-100 first:border-0 pt-2 first:pt-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-slate-800">{e.title}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${eventTypeColor(e.event_type)}`}>
-                      {e.event_type}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1">{e.description}</p>
-                  {e.tags && <p className="text-[10px] text-slate-400 font-mono mt-1">tags: {e.tags}</p>}
-                </div>
-              ))}
-            </div>
-          )}
-        </ExtractionCard>
-        <ExtractionCard title="Automated evaluation (preview)">
-          <div className="space-y-2">
-            <p className="text-xs text-slate-500">
-              Run a higher-tier model over the transcript + extractions and grade each field. Scaffold only — wires up next round.
-            </p>
-            <button
-              onClick={onEval}
-              disabled={evalLoading}
-              className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white rounded-md transition-colors"
-            >
-              {evalLoading ? 'Calling…' : 'Run automated evaluation'}
-            </button>
-            {evalResult && (
-              <pre className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto">
-                {JSON.stringify(evalResult, null, 2)}
-              </pre>
-            )}
-          </div>
-        </ExtractionCard>
-      </div>
-    </section>
-  );
-}
-
-function ExtractionCard({ title, children }) {
-  return (
-    <div className="border border-slate-200 bg-white rounded-md p-3 space-y-2">
-      <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wide">{title}</h4>
-      {children}
-    </div>
-  );
-}
-
-function NotExtracted() {
-  return <p className="text-xs text-slate-400 italic">Not extracted for this day.</p>;
-}
-
-function EmotionalDetail({ r }) {
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${getQuadrantBadgeColor(r.primary_quadrant)}`}>
-          {r.primary_quadrant || '—'}
-        </span>
-        <span className="text-[11px] text-slate-500">
-          valence {r.valence?.toFixed(2)} · arousal {r.arousal?.toFixed(2)}
-        </span>
-      </div>
-      <FieldList
-        items={[
-          ['cognitive_labels', r.cognitive_labels],
-          ['cognitive_triggers', r.cognitive_triggers],
-          ['social_interactions', r.social_interactions],
-        ]}
-      />
-    </div>
-  );
-}
-
-function HealthDetail({ r }) {
-  return (
-    <FieldList
-      items={[
-        ['sleep_quality', r.sleep_quality],
-        ['exercise_type', r.exercise_type],
-        ['diet_quality', r.diet_quality],
-        ['physical_performance', r.physical_performance],
-        ['somatic_sensations', r.somatic_sensations],
-        ['supplements', r.supplements],
-      ]}
-    />
-  );
-}
-
-function ProductivityDetail({ r }) {
-  return (
-    <FieldList
-      items={[
-        ['deep_work_hours', r.deep_work_hours],
-        ['shallow_work_hours', r.shallow_work_hours],
-        ['time_block_adherence', r.time_block_adherence],
-        ['cognitive_load', r.cognitive_load],
-        ['friction_points', r.friction_points],
-      ]}
-    />
-  );
-}
-
-function FieldList({ items }) {
-  return (
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-xs">
-      {items.map(([k, v]) => (
-        <div key={k} className="contents">
-          <dt className="text-slate-400 font-mono">{k}</dt>
-          <dd className="text-slate-700">{formatValue(v)}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function formatValue(v) {
-  if (v == null || v === '') return <span className="text-slate-300 italic">null</span>;
-  if (Array.isArray(v)) {
-    if (v.length === 0) return <span className="text-slate-300 italic">[]</span>;
-    return (
-      <div className="flex flex-wrap gap-1">
-        {v.map((item, i) => (
-          <span key={i} className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px]">{item}</span>
+      <div className="flex gap-1.5">
+        {days.map(d => (
+          <span key={d} className="flex-1 text-center" style={{ fontSize: '9px', color: '#B7B4AD', fontFamily: SANS }}>
+            {weekdayShort(d)}
+          </span>
         ))}
       </div>
-    );
-  }
-  if (typeof v === 'number') return v.toString();
-  return v;
+    </section>
+  );
 }
-

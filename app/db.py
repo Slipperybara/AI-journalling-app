@@ -121,6 +121,16 @@ def init_db() -> None:
             "ALTER TABLE morning_brief_log ADD COLUMN IF NOT EXISTS brief_text TEXT"
         )
 
+        # One empathetic 7-day dashboard summary per user, refreshed by the
+        # nightly batch (and catch-up). The dashboard endpoint reads it.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_summary (
+                user_id UUID NOT NULL PRIMARY KEY,
+                summary TEXT NOT NULL,
+                generated_at TEXT NOT NULL
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotional_analysis (
                 id BIGSERIAL PRIMARY KEY,

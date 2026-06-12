@@ -11,8 +11,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from ..auth import get_current_user_id
+from ..dashboard_summary import get_dashboard_summary
 from ..db import connect
-from ..time_buckets import current_bucket
+from ..time_buckets import bucket_sql_expr, current_bucket
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -97,8 +98,28 @@ async def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
         """, (uid,))
         parse_log = [dict(r) for r in cursor.fetchall()]
 
+        # Which day-buckets in the last 7 days have at least one user message —
+        # powers the binary journaling tracker.
+        bucket_expr = bucket_sql_expr("m.created_at")
+        cursor.execute(f"""
+            SELECT {bucket_expr}::text AS day
+            FROM messages m
+            WHERE m.user_id = %s AND m.role = 'user' AND {bucket_expr} >= %s
+            GROUP BY day
+        """, (uid, seven_back))
+        journaled_days = {r["day"] for r in cursor.fetchall()}
+
+    # Last 7 day-buckets, oldest → newest, each flagged journaled or not.
+    today_bucket = current_bucket()
+    journaling_week = []
+    for i in range(6, -1, -1):
+        d = (today_bucket - timedelta(days=i)).isoformat()
+        journaling_week.append({"day": d, "journaled": d in journaled_days})
+
     return {
         "today_bucket": today_iso,
+        "summary": get_dashboard_summary(user_id),
+        "journaling_week": journaling_week,
         "emotional": emotional,
         "health": health,
         "productivity": productivity,

@@ -147,6 +147,14 @@ def catch_up_parses(days_back: int = 7, user_id: Optional[UUID] = None) -> None:
             print(f"[batch] catch-up morning brief failed user={uid}")
             traceback.print_exc()
 
+        try:
+            from . import dashboard_summary
+            dashboard_summary.refresh_dashboard_summary(uid)
+            print(f"[batch] catch-up dashboard summary refreshed user={uid}")
+        except Exception:
+            print(f"[batch] catch-up dashboard summary failed user={uid}")
+            traceback.print_exc()
+
 
 def backfill_all_message_days(user_id: UUID) -> int:
     """Parse every day-bucket that has at least one user message for this
@@ -201,4 +209,12 @@ def run_scheduled_batch() -> None:
             print(f"[batch] morning brief user={uid}: {brief}")
         except Exception:
             print(f"[batch] morning brief failed user={uid} day={today}")
+            traceback.print_exc()
+
+        try:
+            from . import dashboard_summary
+            dashboard_summary.refresh_dashboard_summary(uid)
+            print(f"[batch] dashboard summary refreshed user={uid}")
+        except Exception:
+            print(f"[batch] dashboard summary failed user={uid}")
             traceback.print_exc()

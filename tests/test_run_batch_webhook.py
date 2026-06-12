@@ -35,6 +35,8 @@ def webhook_enabled(monkeypatch):
                         lambda uid: {"events_merged": 0, "topics_merged": 0, "goals_merged": 0})
     monkeypatch.setattr(admin_router.morning_brief, "post_morning_brief",
                         lambda day, uid: {"status": "posted", "day": day, "conversation_id": 42})
+    monkeypatch.setattr(admin_router.dashboard_summary, "refresh_dashboard_summary",
+                        lambda uid: {"status": "refreshed", "summary": "stub summary"})
 
     yield
     settings.batch_webhook_secret = prev
@@ -77,6 +79,7 @@ def test_200_with_correct_secret_runs_pipeline(webhook_enabled):
         assert per_user["parse"]["status"] == "succeeded"
         assert per_user["graph"]["status"] == "ok"
         assert per_user["morning_brief"]["status"] == "posted"
+        assert per_user["dashboard_summary"]["status"] == "refreshed"
 
 
 def test_200_with_no_users(webhook_enabled, monkeypatch):
