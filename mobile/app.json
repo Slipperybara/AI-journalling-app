@@ -10,7 +10,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mindforge.app",
-      "usesAppleSignIn": true
+      "usesAppleSignIn": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.mindforge.app",
@@ -29,6 +32,12 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-apple-authentication"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7b8ae534-ffd3-4769-9d63-7c8dbbcf5303"
+      }
+    },
+    "owner": "jerry3312"
   }
 }
