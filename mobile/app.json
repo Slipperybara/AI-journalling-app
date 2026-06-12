@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "MindForge",
+    "slug": "mindforge",
+    "scheme": "mindforge",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mindforge.app"
+    },
+    "android": {
+      "package": "com.mindforge.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#ECE9E4",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
