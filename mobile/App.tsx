@@ -5,7 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginScreen } from './components/LoginScreen';
-import { HomeScreen } from './components/HomeScreen';
+import { ChatScreen } from './components/ChatScreen';
 
 function Root() {
   const { session, loading } = useAuth();
@@ -16,7 +16,7 @@ function Root() {
       </View>
     );
   }
-  return session ? <HomeScreen /> : <LoginScreen />;
+  return session ? <ChatScreen /> : <LoginScreen />;
 }
 
 export default function App() {
