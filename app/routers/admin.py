@@ -16,11 +16,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+from .. import analytics, dashboard_summary, graph_batch, graph_maintenance, morning_brief
 from ..auth import get_current_user_id
 from ..batch import parse_day
 from ..core import settings
 from ..day_messages import get_all_user_ids_with_messages
-from .. import dashboard_summary, graph_batch, graph_maintenance, morning_brief
 from ..time_buckets import current_bucket
 
 
@@ -87,6 +87,21 @@ async def run_batch_webhook(
             per_user["dashboard_summary"] = {"status": "failed", "error": str(exc)}
         results[str(uid)] = per_user
 
+    parse_successes = sum(
+        1 for r in results.values() if r.get("parse", {}).get("status") == "succeeded"
+    )
+    briefs_posted = sum(
+        1 for r in results.values() if r.get("morning_brief", {}).get("status") == "posted"
+    )
+    analytics.capture(
+        "batch_pipeline",
+        "nightly_batch_completed",
+        {
+            "users_processed": len(user_ids),
+            "parse_succeeded": parse_successes,
+            "morning_briefs_posted": briefs_posted,
+        },
+    )
     return {
         "yesterday": yesterday,
         "today": today,

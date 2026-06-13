@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from .. import analytics
 from ..auth import get_current_user_id
 from ..bot import process_message_background
 from ..db import connect
@@ -52,5 +53,6 @@ async def post_message(
         """, (str(user_id), conv_id, msg.content, created_at))
         msg_id = cursor.fetchone()["id"]
 
+    analytics.capture(user_id, "message_sent", {"message_length": len(msg.content)})
     background_tasks.add_task(process_message_background, conv_id, msg.content, user_id)
     return {"id": msg_id, "role": "user", "content": msg.content, "created_at": created_at}

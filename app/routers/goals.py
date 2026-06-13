@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from .. import goals as goals_svc
+from .. import analytics, goals as goals_svc
 from ..auth import get_current_user_id
 from ..goals import (
     GoalCapReachedError,
@@ -47,7 +47,7 @@ async def list_goals_endpoint(
 @router.post("")
 async def create_goal(body: GoalCreate, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.add_user_goal(body.name, user_id)
+        result = goals_svc.add_user_goal(body.name, user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except GoalExistsError:
@@ -59,17 +59,21 @@ async def create_goal(body: GoalCreate, user_id: UUID = Depends(get_current_user
             status_code=409,
             detail="3 active goals already; fulfill or remove one first",
         )
+    analytics.capture(user_id, "goal_created")
+    return result
 
 
 @router.patch("/{name}/fulfill")
 async def fulfill_goal(name: str, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.mark_fulfilled(name, user_id)
+        result = goals_svc.mark_fulfilled(name, user_id)
     except GoalNotFoundError:
         raise HTTPException(
             status_code=404,
             detail=f"no active goal named '{name}'",
         )
+    analytics.capture(user_id, "goal_fulfilled")
+    return result
 
 
 @router.patch("/{name}/rename")
@@ -96,8 +100,10 @@ async def rename_goal_endpoint(
 @router.delete("/{name}")
 async def remove_goal(name: str, user_id: UUID = Depends(get_current_user_id)):
     try:
-        return goals_svc.mark_removed(name, user_id)
+        result = goals_svc.mark_removed(name, user_id)
     except GoalNotFoundError:
         raise HTTPException(
             status_code=404, detail=f"no goal named '{name}'"
         )
+    analytics.capture(user_id, "goal_removed")
+    return result

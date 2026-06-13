@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # true for local dev (single-machine), set to false on Render where
     # the GitHub Actions cron drives the batch over HTTP instead.
     run_inline_scheduler: bool = True
+    # PostHog product analytics (optional). When posthog_api_key is empty,
+    # server-side analytics is a no-op.
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
 
     class Config:
         env_file = ".env"

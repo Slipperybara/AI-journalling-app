@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from . import goals as goals_svc
+from . import analytics, goals as goals_svc
 from .bot import store_assistant_message
 from .core import client
 from .db import connect
@@ -73,6 +73,11 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
         return {"status": "failed", "day": day, "error": str(exc)}
 
     _log(day, status="posted", conversation_id=conv_id, user_id=user_id, brief_text=brief)
+    analytics.capture(user_id, "morning_brief_posted", {
+        "is_sparse": context["is_sparse_yesterday"],
+        "has_pattern_data": _has_pattern_data(context),
+        "active_goals_count": len(context["active_goals"]),
+    })
     return {"status": "posted", "day": day, "conversation_id": conv_id}
 
 
