@@ -9,14 +9,14 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mindforge.app",
+      "bundleIdentifier": "com.jaijournal.app",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.mindforge.app",
+      "package": "com.jaijournal.app",
       "adaptiveIcon": {
         "backgroundColor": "#ECE9E4",
         "foregroundImage": "./assets/android-icon-foreground.png",
