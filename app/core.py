@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # server-side analytics is a no-op.
     posthog_api_key: str = ""
     posthog_host: str = "https://us.i.posthog.com"
+    # Environment tag attached to every analytics event so a single PostHog
+    # project can separate prod from staging traffic (filter on `environment`).
+    # Prod needs no change (defaults to "production"); staging sets APP_ENV=staging.
+    app_env: str = "production"
 
     class Config:
         env_file = ".env"

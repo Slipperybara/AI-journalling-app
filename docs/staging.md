@@ -13,7 +13,7 @@ analytics.
 | Backend | Render `ai-journalling-app-api` | Render `ai-journalling-app-api-staging` (from `staging`) |
 | Postgres + Auth | Supabase `AI Journalling` (`iazqotzjesomoyqfelgt`) | Supabase `AI Journalling Staging` (`eqwijryhjubgnyetufpa`) |
 | Neo4j | DO droplet `mindforge-neo4j.duckdns.org` | Neo4j Aura Free (`mindforge-staging`) |
-| Analytics | PostHog prod project | PostHog `MindForge Staging` project |
+| Analytics | PostHog project (env=production) | same PostHog project, tagged `environment=staging` (free tier = 1 project) |
 | Mobile | points at prod (default) | EAS `staging` profile / `.env` override |
 | Batch | GitHub Actions cron → webhook | inline scheduler on the staging service + manual `/api/admin/*` |
 
@@ -39,8 +39,9 @@ Same names as prod, different values. Set on the Render staging service:
 | `NEO4J_USER` | `neo4j` |
 | `NEO4J_PASSWORD` | Aura generated password |
 | `OPENAI_API_KEY` | same key as prod (or a separate one) |
-| `POSTHOG_API_KEY` | staging PostHog project `phc_…` key |
+| `POSTHOG_API_KEY` | **same** `phc_…` key as prod (free tier = 1 project) |
 | `POSTHOG_HOST` | `https://us.i.posthog.com` |
+| `APP_ENV` | `staging` — tags every event so you can filter staging out of prod dashboards |
 | `RUN_INLINE_SCHEDULER` | `true` (staging runs the batch in-process; no separate cron) |
 | `BATCH_WEBHOOK_SECRET` | a fresh `openssl rand -hex 32` (only needed if you POST `/api/admin/run-batch` manually) |
 | `CORS_ORIGINS` | `http://localhost:5173` (mobile sends no Origin; widen only if a staging web is added) |
@@ -61,7 +62,9 @@ Schema self-materializes on first boot via `init_db()` + `init_graph()`; nothing
    - **Authentication → URL Configuration → Redirect URLs** → add `mindforge://auth-callback`
      and `mindforge://*`.
    - *(Apple sign-in deferred until the Apple Developer account is live.)*
-3. **PostHog staging** — create a new project `MindForge Staging`, copy its `phc_` key.
+3. **PostHog** — free tier allows only one project, so staging **reuses the prod
+   `phc_` key**. Every event is tagged `environment` (`production` vs `staging`) via
+   `APP_ENV`; filter `environment = production` in your dashboards to exclude staging.
 4. **Render staging service** — created from the `staging` branch with the env vars above
    (provisioned via Render MCP; pick the workspace first).
 

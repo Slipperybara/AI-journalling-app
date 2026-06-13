@@ -36,7 +36,8 @@ def capture(user_id: UUID | str, event: str, properties: Optional[dict] = None) 
     if _client is None:
         return
     try:
-        _client.capture(distinct_id=str(user_id), event=event, properties=properties or {})
+        props = {"environment": settings.app_env, **(properties or {})}
+        _client.capture(distinct_id=str(user_id), event=event, properties=props)
     except Exception:  # pragma: no cover - analytics must never break a request
         pass
 
