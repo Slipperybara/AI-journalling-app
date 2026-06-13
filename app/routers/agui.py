@@ -30,6 +30,7 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 
+from .. import analytics
 from ..auth import get_current_user_id
 from ..bot import generate_bot_reply_stream, store_assistant_message
 from ..db import connect
@@ -83,6 +84,10 @@ async def agui_run(
 
         # User message first, so context assembly sees it (preserves ordering).
         _persist_user_message(conv_id, user_text, user_id)
+        analytics.capture(
+            user_id, "message_sent",
+            {"surface": "web", "conversation_id": conv_id, "length": len(user_text)},
+        )
 
         message_id = str(uuid.uuid4())
         full: list[str] = []

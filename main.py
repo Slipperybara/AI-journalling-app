@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import scheduler
+from app import analytics, scheduler
 from app.core import settings
 from app.db import close_pool, init_db
 from app.graph_db import close as graph_close, init_graph
@@ -44,6 +44,7 @@ def _shutdown() -> None:
     scheduler.stop()
     graph_close()
     close_pool()
+    analytics.shutdown()
 
 
 if __name__ == "__main__":

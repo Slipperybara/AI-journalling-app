@@ -23,6 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from .. import analytics
 from ..auth import get_current_user_id
 from ..bot import generate_bot_reply_stream, store_assistant_message
 from ..db import connect
@@ -75,6 +76,10 @@ async def stream_run(
     def event_stream():
         # User message first, so context assembly sees it (preserves ordering).
         _persist_user_message(conv_id, user_text, user_id)
+        analytics.capture(
+            user_id, "message_sent",
+            {"surface": "mobile", "conversation_id": conv_id, "length": len(user_text)},
+        )
 
         full: list[str] = []
         try:

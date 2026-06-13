@@ -10,6 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
+from .. import analytics
 from ..auth import get_current_user_id
 from ..dashboard_summary import get_dashboard_summary
 from ..db import connect
@@ -116,6 +117,7 @@ async def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
         d = (today_bucket - timedelta(days=i)).isoformat()
         journaling_week.append({"day": d, "journaled": d in journaled_days})
 
+    analytics.capture(user_id, "dashboard_viewed")
     return {
         "today_bucket": today_iso,
         "summary": get_dashboard_summary(user_id),

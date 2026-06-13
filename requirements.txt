@@ -11,3 +11,4 @@ ag-ui-protocol==0.1.19
 psycopg[binary,pool]>=3.2.10
 python-jose[cryptography]>=3.5.0
 httpx>=0.28.0
+posthog>=3.0.0

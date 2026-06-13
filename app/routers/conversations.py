@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from .. import analytics
 from ..auth import get_current_user_id
 from ..db import connect
 
@@ -25,6 +26,7 @@ async def create_conversation(user_id: UUID = Depends(get_current_user_id)):
             (str(user_id), started_at),
         )
         conv_id = cursor.fetchone()["id"]
+    analytics.capture(user_id, "conversation_created", {"conversation_id": conv_id})
     return {"id": conv_id, "started_at": started_at}
 
 
