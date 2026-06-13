@@ -15,6 +15,18 @@
       "developmentClient": true,
       "distribution": "internal"
     },
+    "staging": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ai-journalling-app-api-staging.onrender.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://eqwijryhjubgnyetufpa.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVxd2lqcnloanViZ255ZXR1ZnBhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMTE3NzIsImV4cCI6MjA5Njg4Nzc3Mn0.Uvn-l1MnJwCARSqFJhU7VGvtlAEb9sfIRWsJbZLmxHc"
+      }
+    },
     "preview": {
       "distribution": "internal",
       "ios": {
