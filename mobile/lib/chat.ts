@@ -36,6 +36,20 @@ export async function getMessages(convId: number): Promise<Message[]> {
   return (await r.json()) as Message[];
 }
 
+export async function renameConversation(convId: number, title: string): Promise<void> {
+  await apiFetch(`/api/conversations/${convId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+}
+
+// Soft-delete (archive): hides the conversation from the list; messages stay
+// in the database so the nightly parser / knowledge graph keep referencing them.
+export async function deleteConversation(convId: number): Promise<void> {
+  await apiFetch(`/api/conversations/${convId}`, { method: 'DELETE' });
+}
+
 export type StreamHandlers = {
   onRetrieval?: (phase: 'start' | 'end') => void;
   onDelta: (text: string) => void;

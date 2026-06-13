@@ -3,13 +3,8 @@ import { ActivityIndicator, Animated, FlatList, Platform, Pressable, Text, TextI
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import {
-  createConversation,
-  getMessages,
-  listConversations,
-  streamReply,
-  type Message,
-} from '../lib/chat';
+import { createConversation, getMessages, streamReply, type Message } from '../lib/chat';
+import { tryGoalCommand } from '../lib/goals';
 import { fonts } from '../lib/theme';
 import { Markdown } from './Markdown';
 
@@ -59,25 +54,39 @@ function PulsingDot() {
   return <Animated.View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#8E8B83', opacity: op }} />;
 }
 
-export function ChatScreen() {
-  const [convId, setConvId] = useState<number | null>(null);
+export function ChatScreen({
+  convId,
+  booting,
+  onConvCreated,
+}: {
+  convId: number | null;
+  booting: boolean;
+  onConvCreated: (id: number) => void;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [streamText, setStreamText] = useState('');
   const listRef = useRef<FlatList<Message>>(null);
+  const loadedConv = useRef<number | null>(null);
 
+  // Load messages when the selected conversation changes (from the drawer).
+  // loadedConv guards against reloading right after we create a conversation
+  // ourselves on first send — which would otherwise wipe the optimistic message.
   useEffect(() => {
-    (async () => {
-      const convs = await listConversations();
-      if (convs.length) {
-        setConvId(convs[0].id);
-        setMessages(await getMessages(convs[0].id));
-      }
-      setLoading(false);
-    })();
-  }, []);
+    if (convId === loadedConv.current) return;
+    loadedConv.current = convId;
+    if (convId == null) {
+      setMessages([]);
+      return;
+    }
+    setLoadingMsgs(true);
+    getMessages(convId).then((m) => {
+      setMessages(m);
+      setLoadingMsgs(false);
+    });
+  }, [convId]);
 
   const scrollToEnd = useCallback(() => {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
@@ -88,10 +97,36 @@ export function ChatScreen() {
     if (!text || sending) return;
     setInput('');
 
+    // /goal slash-commands run before touching a conversation. `list` and
+    // errors inject a local-only message and stop; a successful mutation falls
+    // through so the bot can acknowledge it naturally (mirrors the web app).
+    const goal = await tryGoalCommand(text);
+    if (goal) {
+      if (!goal.ok) {
+        setMessages((m) => [
+          ...m,
+          { id: `local-${Date.now()}`, role: 'assistant', content: `(${goal.message})`, created_at: new Date().toISOString() },
+        ]);
+        scrollToEnd();
+        return;
+      }
+      if (goal.listMessage) {
+        const listMessage = goal.listMessage;
+        setMessages((m) => [
+          ...m,
+          { id: `local-${Date.now()}`, role: 'assistant', content: listMessage, created_at: new Date().toISOString() },
+        ]);
+        scrollToEnd();
+        return;
+      }
+      // Mutation succeeded — fall through so the bot acknowledges naturally.
+    }
+
     let id = convId;
     if (!id) {
       id = await createConversation();
-      setConvId(id);
+      loadedConv.current = id;
+      onConvCreated(id);
     }
 
     setMessages((m) => [
@@ -129,9 +164,9 @@ export function ChatScreen() {
         ]);
       },
     });
-  }, [input, sending, convId, scrollToEnd]);
+  }, [input, sending, convId, scrollToEnd, onConvCreated]);
 
-  if (loading) {
+  if (booting || loadingMsgs) {
     return (
       <View className="flex-1 items-center justify-center bg-paper">
         <ActivityIndicator color="#8E8B84" />

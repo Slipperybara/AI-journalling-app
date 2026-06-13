@@ -107,6 +107,42 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
   );
 }
 
+function GoalsStrip({ goals }: { goals: { name: string }[] }) {
+  if (!goals.length) return null;
+  return (
+    <View className="mb-7">
+      <View className="mb-2 flex-row items-baseline justify-between">
+        <Text
+          className="uppercase text-muted"
+          style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.2 }}
+        >
+          Goals
+        </Text>
+        <Text style={{ fontFamily: fonts.sans, fontSize: 11, color: '#B7B4AD' }}>
+          {goals.length} of 3 active
+        </Text>
+      </View>
+      <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+        {goals.map((g) => (
+          <View
+            key={g.name}
+            style={{
+              backgroundColor: 'rgba(110,155,122,0.12)',
+              borderColor: 'rgba(110,155,122,0.30)',
+              borderWidth: 1,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: '#4B6B53' }}>{g.name}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function DashboardScreen() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,6 +234,8 @@ export function DashboardScreen() {
         scoreByDay={physByDay}
         headline={fmtScore(avg(days.map((d) => physByDay[d])))}
       />
+
+      <GoalsStrip goals={data?.goals?.active ?? []} />
     </ScrollView>
   );
 }
