@@ -17,9 +17,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginScreen } from './components/LoginScreen';
 import { MainScreen } from './components/MainScreen';
-import { Onboarding } from './components/Onboarding';
+import { OnboardingFlow } from './components/onboarding/OnboardingFlow';
 import { Paywall } from './components/Paywall';
 import { PURCHASES_ENABLED, configurePurchases, isEntitled } from './lib/purchases';
+import { identify } from './lib/analytics';
 
 const ONBOARDED_KEY = 'jai_onboarded';
 
@@ -62,6 +63,11 @@ function Root() {
     AsyncStorage.getItem(ONBOARDED_KEY).then((v) => setOnboarded(v === '1'));
   }, []);
 
+  // Link the onboarding (anonymous) PostHog person to the signed-in user.
+  useEffect(() => {
+    if (session?.user?.id) identify(session.user.id);
+  }, [session?.user?.id]);
+
   if (loading || onboarded === null) {
     return <Spinner />;
   }
@@ -74,7 +80,7 @@ function Root() {
   }
   if (!onboarded) {
     return (
-      <Onboarding
+      <OnboardingFlow
         onDone={() => {
           AsyncStorage.setItem(ONBOARDED_KEY, '1');
           setOnboarded(true);
