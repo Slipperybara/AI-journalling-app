@@ -8,7 +8,9 @@ import { AmbientBackground } from './AmbientBackground';
 import { ChatScreen } from './ChatScreen';
 import { ConversationsDrawer } from './ConversationsDrawer';
 import { DashboardScreen } from './DashboardScreen';
-import { TopBar, type MainView } from './TopBar';
+import { TopBar } from './TopBar';
+
+type MainView = 'chat' | 'dashboard';
 
 export function MainScreen() {
   const [view, setView] = useState<MainView>('chat');
@@ -18,6 +20,10 @@ export function MainScreen() {
   // 'cool' while the analytical (GraphRAG) path runs — ChatScreen reports the
   // retrieval phase from the stream. Mirrors the web app's tint.
   const [bgMode, setBgMode] = useState<'warm' | 'cool'>('warm');
+
+  const today = new Date()
+    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    .toUpperCase();
 
   // Boot: open the most recent conversation (mirrors the web app). If there are
   // none, convId stays null and a conversation is created lazily on first send.
@@ -41,7 +47,7 @@ export function MainScreen() {
       className="flex-1"
     >
       <AmbientBackground mode={bgMode} />
-      <TopBar view={view} onChange={setView} onMenu={view === 'chat' ? () => setDrawerOpen(true) : undefined} />
+      <TopBar date={today} onMenu={() => setDrawerOpen(true)} />
       <View className="flex-1">
         {view === 'chat' ? (
           <ChatScreen
@@ -58,12 +64,19 @@ export function MainScreen() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         activeConvId={convId}
+        view={view}
         onSelect={(id) => {
           setConvId(id);
+          setView('chat');
           setDrawerOpen(false);
         }}
         onNew={() => {
           setConvId(null);
+          setView('chat');
+          setDrawerOpen(false);
+        }}
+        onOpenDashboard={() => {
+          setView('dashboard');
           setDrawerOpen(false);
         }}
       />

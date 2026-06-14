@@ -10,15 +10,15 @@ import { Markdown } from './Markdown';
 
 const userText = {
   fontFamily: fonts.serifItalic,
-  fontSize: 18,
-  lineHeight: 31,
+  fontSize: 16,
+  lineHeight: 27,
   color: '#5C5850',
   textAlign: 'right' as const,
 };
 const aiText = {
   fontFamily: fonts.serif,
-  fontSize: 19,
-  lineHeight: 31,
+  fontSize: 17,
+  lineHeight: 28,
   color: '#6E6B64',
 };
 
@@ -27,7 +27,7 @@ const aiText = {
 function JournalMessage({ message }: { message: Message }) {
   if (message.role === 'user') {
     return (
-      <View className="mb-8 mt-1 items-end">
+      <View className="mb-10 mt-2 items-end">
         <Text style={userText}>{message.content}</Text>
       </View>
     );
@@ -186,10 +186,6 @@ export function ChatScreen({
     );
   }
 
-  const today = new Date()
-    .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-    .toUpperCase();
-
   const canSend = input.trim().length > 0 && !sending;
 
   return (
@@ -197,19 +193,11 @@ export function ChatScreen({
       <FlatList
         ref={listRef}
         className="flex-1"
-        contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 4, paddingBottom: 16 }}
+        contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 8, paddingBottom: 16 }}
         data={messages}
         keyExtractor={(m) => String(m.id)}
         renderItem={({ item }) => <JournalMessage message={item} />}
         onContentSizeChange={scrollToEnd}
-        ListHeaderComponent={
-          <Text
-            style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.4, color: '#9C998F' }}
-            className="pb-6 pt-1"
-          >
-            {today}
-          </Text>
-        }
         ListEmptyComponent={
           !sending ? (
             <View style={{ alignItems: 'center', marginTop: 36 }}>

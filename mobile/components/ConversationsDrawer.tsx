@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useAuth } from '../lib/auth';
 import { deleteConversation, listConversations, renameConversation, type Conversation } from '../lib/chat';
 import { colors, fonts } from '../lib/theme';
 
@@ -37,15 +38,20 @@ export function ConversationsDrawer({
   open,
   onClose,
   activeConvId,
+  view,
   onSelect,
   onNew,
+  onOpenDashboard,
 }: {
   open: boolean;
   onClose: () => void;
   activeConvId: number | null;
+  view: 'chat' | 'dashboard';
   onSelect: (id: number) => void;
   onNew: () => void;
+  onOpenDashboard: () => void;
 }) {
+  const { signOut } = useAuth();
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [mounted, setMounted] = useState(open);
   const tx = useRef(new Animated.Value(-DRAWER_W)).current;
@@ -132,7 +138,31 @@ export function ConversationsDrawer({
         }}
       >
         <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1 }}>
-          <View style={{ paddingHorizontal: 18, paddingTop: 8, paddingBottom: 4 }}>
+          <Pressable
+            onPress={onOpenDashboard}
+            style={{ paddingHorizontal: 18, paddingTop: 10, paddingVertical: 12 }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.serifMedium,
+                fontSize: 18,
+                color: view === 'dashboard' ? colors.ink : colors.inkSoft,
+              }}
+            >
+              ◇  Dashboard
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onNew}
+            style={{ paddingHorizontal: 18, paddingVertical: 12 }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Text style={{ fontFamily: fonts.serifMedium, fontSize: 18, color: colors.inkSoft }}>＋  New chat</Text>
+          </Pressable>
+
+          <View style={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 4 }}>
             <Text
               style={{
                 fontFamily: fonts.sans,
@@ -146,20 +176,13 @@ export function ConversationsDrawer({
             </Text>
           </View>
 
-          <Pressable
-            onPress={onNew}
-            style={{ paddingHorizontal: 18, paddingVertical: 12 }}
-            android_ripple={{ color: colors.line }}
-          >
-            <Text style={{ fontFamily: fonts.serifMedium, fontSize: 18, color: colors.inkSoft }}>＋  New chat</Text>
-          </Pressable>
-
           <FlatList
+            style={{ flex: 1 }}
             data={convs}
             keyExtractor={(c) => String(c.id)}
             contentContainerStyle={{ paddingBottom: 16 }}
             renderItem={({ item }) => {
-              const active = item.id === activeConvId;
+              const active = view === 'chat' && item.id === activeConvId;
               return (
                 <Pressable
                   onPress={() => onSelect(item.id)}
@@ -196,6 +219,14 @@ export function ConversationsDrawer({
               </Text>
             }
           />
+
+          <Pressable
+            onPress={signOut}
+            style={{ paddingHorizontal: 18, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.line }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>Sign out</Text>
+          </Pressable>
         </SafeAreaView>
       </Animated.View>
     </View>

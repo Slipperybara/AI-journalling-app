@@ -92,13 +92,21 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
           <View key={w.day} className="flex-1 items-center">
             <View
               style={{
-                width: '100%',
+                width: 30,
                 height: 30,
-                borderRadius: 6,
-                backgroundColor: w.journaled ? colors.journaled : colors.track,
+                borderRadius: 15,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: w.journaled ? colors.journaled : 'transparent',
+                borderWidth: w.journaled ? 0 : 1.5,
+                borderColor: '#DCD7CF',
               }}
-            />
-            <Text className="mt-1 text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
+            >
+              {w.journaled ? (
+                <Text style={{ color: '#fff', fontSize: 14, fontFamily: fonts.sansMedium }}>✓</Text>
+              ) : null}
+            </View>
+            <Text className="mt-1.5 text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
               {weekdayShort(w.day)}
             </Text>
           </View>
@@ -235,7 +243,7 @@ export function DashboardScreen() {
       />
       <DimensionBars
         title="Exercise"
-        color={colors.exercise}
+        color={colors.emotional}
         days={days}
         scoreByDay={physByDay}
         headline={fmtScore(avg(days.map((d) => physByDay[d])))}
