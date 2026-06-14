@@ -107,4 +107,16 @@ async def stream_run(
                 store_assistant_message(conv_id, _APOLOGY, user_id)
             yield _sse("error", {"message": str(exc)})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            # Defeat proxy/CDN buffering so tokens flush one-by-one instead of
+            # arriving in a burst. X-Accel-Buffering is honoured by Render's
+            # nginx-family proxy; no-cache stops any intermediary from holding
+            # the stream.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
