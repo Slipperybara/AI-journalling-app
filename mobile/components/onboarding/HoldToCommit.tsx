@@ -27,25 +27,35 @@ export function HoldToCommit({ label, onComplete }: { label: string; onComplete:
     }
   };
 
-  const width = fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  // A circular "fills up" metaphor: a deeper amber rises from the bottom as the
+  // hold completes. Releasing early drains it back.
+  const SIZE = 180;
+  const height = fill.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
 
   return (
     <Pressable
       onPressIn={start}
       onPressOut={cancel}
       style={{
-        height: 56,
-        borderRadius: 18,
-        backgroundColor: '#2A2825',
+        width: SIZE,
+        height: SIZE,
+        borderRadius: SIZE / 2,
+        backgroundColor: '#F0C84B',
         overflow: 'hidden',
         justifyContent: 'center',
         alignItems: 'center',
+        shadowColor: '#000',
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 6 },
       }}
     >
       <Animated.View
-        style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width, backgroundColor: '#6E9B7A' }}
+        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height, backgroundColor: '#E0A21F' }}
       />
-      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 16, color: '#fff' }}>{label}</Text>
+      <Text style={{ fontFamily: fonts.sansMedium, fontSize: 17, color: '#2A2825', textAlign: 'center' }}>
+        {label}
+      </Text>
     </Pressable>
   );
 }

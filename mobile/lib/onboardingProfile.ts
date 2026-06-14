@@ -5,9 +5,8 @@ export type OnboardingAnswers = {
   age?: string;
   gender?: string;
   occupation?: string;
-  familiarity?: string[];
+  familiarity?: string;
   issues?: string[];
-  tried_before?: string;
 };
 
 const KEY = 'jai_onboarding_answers';
@@ -36,8 +35,7 @@ export function flattenAnswers(a: OnboardingAnswers): Record<string, string> {
     age: a.age ?? '',
     gender: a.gender ?? '',
     occupation: a.occupation ?? '',
-    familiarity: (a.familiarity ?? []).join(', '),
+    familiarity: a.familiarity ?? '',
     issues: (a.issues ?? []).join(', '),
-    tried_before: a.tried_before ?? '',
   };
 }

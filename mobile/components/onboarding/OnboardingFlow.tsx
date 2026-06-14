@@ -19,11 +19,10 @@ const FAMILIARITY = [
   "I'm completely new to it",
 ];
 const ISSUES = ['Work', 'School', 'Relationships', 'Family', 'Finances', 'General stress & anxiety'];
-const TRIED = ['Yes — many times', 'Once or twice', 'Never tried'];
 
 const TAILORED: Record<string, { title: string; body: string }> = {
   Work: { title: 'Work weighs heavy.', body: 'Regular reflection is shown to lower burnout and help you actually switch off at night.' },
-  School: { title: 'School is a lot.', body: 'Writing it down clears the mental clutter, so you can focus — and remember more.' },
+  School: { title: 'School is a lot.', body: 'Writing your feelings and thoughts down clears the mental clutter — so you can focus, and remember more.' },
   Relationships: { title: 'Relationships are tender.', body: 'Naming what you feel helps you respond with intention, instead of reacting in the moment.' },
   Family: { title: 'Family stays with you.', body: 'Reflection creates a little space between you and the noise — and a lot more patience.' },
   Finances: { title: 'Money is stressful.', body: 'Getting the worry out of your head and onto the page quiets the late-night spiral.' },
@@ -31,11 +30,27 @@ const TAILORED: Record<string, { title: string; body: string }> = {
 };
 
 const STEPS = [
+  'welcome',
   'name', 'age', 'gender', 'occupation',
   'familiarity', 'issues',
-  'benefit', 'tailored', 'tried', 'reread', 'reveal1', 'reveal2',
+  'benefit', 'tailored', 'stat', 'reread', 'reveal1', 'reveal2',
   'commit', 'notifications',
 ] as const;
+
+// Keyword highlighting: wrap a phrase in ==double-equals== and it renders with a
+// soft yellow marker behind it (mirrors the web app's `==…==` highlight).
+const HL_BG = 'rgba(232,191,90,0.38)';
+function renderRich(text: string, color: string): ReactNode[] {
+  return text.split(/(==[^=]+==)/g).map((seg, i) =>
+    seg.startsWith('==') && seg.endsWith('==') ? (
+      <Text key={i} style={{ backgroundColor: HL_BG, color }}>
+        {seg.slice(2, -2)}
+      </Text>
+    ) : (
+      seg
+    ),
+  );
+}
 
 function Heading({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
@@ -51,8 +66,12 @@ function Heading({ title, subtitle }: { title: string; subtitle?: string }) {
 function StoryView({ title, body }: { title: string; body: string }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center' }}>
-      <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>{title}</Text>
-      <Text style={{ fontFamily: fonts.serif, fontSize: 19, lineHeight: 30, color: '#6E6B64', marginTop: 16 }}>{body}</Text>
+      <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>
+        {renderRich(title, '#2A2825')}
+      </Text>
+      <Text style={{ fontFamily: fonts.serif, fontSize: 19, lineHeight: 30, color: '#6E6B64', marginTop: 16 }}>
+        {renderRich(body, '#6E6B64')}
+      </Text>
     </View>
   );
 }
@@ -78,7 +97,7 @@ function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: (
 
 export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<OnboardingAnswers>({ familiarity: [], issues: [] });
+  const [answers, setAnswers] = useState<OnboardingAnswers>({ issues: [] });
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -122,6 +141,20 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   let footer: ReactNode = null;
 
   switch (key) {
+    case 'welcome':
+      content = (
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <Text style={{ fontFamily: fonts.serifMedium, fontSize: 40, lineHeight: 46, color: '#2A2825' }}>
+            Welcome to JAI
+          </Text>
+          <Text style={{ fontFamily: fonts.serif, fontSize: 19, lineHeight: 30, color: '#6E6B64', marginTop: 16 }}>
+            Your warm companion for clearer, calmer days — let&apos;s set things up in a minute.
+          </Text>
+        </View>
+      );
+      footer = <PrimaryButton label="Get started" onPress={next} />;
+      break;
+
     case 'name':
       content = (
         <>
@@ -184,11 +217,11 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'familiarity':
       content = (
         <>
-          <Heading title="How do you relate to journaling?" subtitle="Pick all that feel true." />
-          <ChoiceGroup multi options={FAMILIARITY} value={answers.familiarity ?? []} onChange={(v) => set('familiarity', v)} />
+          <Heading title="How do you relate to journaling?" subtitle="Pick the one that fits best." />
+          <ChoiceGroup options={FAMILIARITY} value={answers.familiarity} onChange={(v) => set('familiarity', v)} />
         </>
       );
-      footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.familiarity?.length} />;
+      footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.familiarity} />;
       break;
 
     case 'issues':
@@ -216,21 +249,21 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       footer = <PrimaryButton label="Continue" onPress={next} />;
       break;
 
-    case 'tried':
+    case 'stat':
       content = (
-        <>
-          <Heading title="Be honest — have you tried journaling before, and stopped?" />
-          <ChoiceGroup options={TRIED} value={answers.tried_before} onChange={(v) => set('tried_before', v)} />
-        </>
+        <StoryView
+          title="But here's the catch."
+          body="Studies show that even with all these benefits, around ==70% of people== say they couldn't stick with journaling after a while — it's just hard to keep up alone."
+        />
       );
-      footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.tried_before} />;
+      footer = <PrimaryButton label="Continue" onPress={next} />;
       break;
 
     case 'reread':
       content = (
         <StoryView
-          title="You're not alone."
-          body="Most of journaling's power comes from rereading your past entries — and almost nobody ever does. It's the part that quietly gets skipped."
+          title="Also…"
+          body="Most of journaling's power comes from ==rereading== your past entries — and almost nobody ever does. It's the part that quietly gets skipped."
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
@@ -250,7 +283,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       content = (
         <StoryView
           title="And it rereads for you."
-          body="JAI quietly connects the dots across your days, tracks how you're really doing, and is ready with grounded advice whenever you ask."
+          body="JAI quietly ==connects the dots== across your days, ==tracks your patterns==, and is ready with ==grounded advice== whenever you ask."
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
@@ -258,16 +291,23 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 
     case 'commit':
       content = (
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text
+            style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825', textAlign: 'center' }}
+          >
             Do you want to transform your life?
           </Text>
-          <Text style={{ fontFamily: fonts.serif, fontSize: 18, lineHeight: 28, color: '#6E6B64', marginTop: 16 }}>
-            It starts with a small, daily promise to yourself. Hold the button to commit.
+          <Text
+            style={{ fontFamily: fonts.serif, fontSize: 18, lineHeight: 28, color: '#6E6B64', marginTop: 16, textAlign: 'center' }}
+          >
+            It starts with a small, daily promise to yourself.
           </Text>
+          <View style={{ marginTop: 52 }}>
+            <HoldToCommit label="Hold to commit" onComplete={next} />
+          </View>
         </View>
       );
-      footer = <HoldToCommit label="Hold to commit" onComplete={next} />;
+      footer = null;
       break;
 
     case 'notifications':
