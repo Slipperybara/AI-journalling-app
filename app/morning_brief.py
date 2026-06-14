@@ -81,10 +81,22 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
     push.send_push_to_user(
         user_id,
         title="Good morning",
-        body="Your reflection from yesterday is ready.",
+        body=_push_body(context),
         data={"type": "morning_brief", "conversation_id": conv_id},
     )
     return {"status": "posted", "day": day, "conversation_id": conv_id}
+
+
+def _push_body(context: dict) -> str:
+    """Catchy morning-brief push body, led by yesterday's dominant emotion words
+    (cognitive_labels, e.g. 'excited', 'anxious'). Falls back to a neutral line
+    when yesterday had no captured affect."""
+    emo = context.get("yesterday_emotion") or {}
+    labels = [w for w in (emo.get("cognitive_labels") or []) if w]
+    if labels:
+        feeling = labels[0] if len(labels) == 1 else f"{labels[0]} and {labels[1]}"
+        return f"Yesterday, you were feeling {feeling} — your reflection's ready."
+    return "Your reflection from yesterday is ready."
 
 
 def _gather_context(day: str, user_id: UUID) -> dict:
