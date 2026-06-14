@@ -32,7 +32,8 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-apple-authentication",
-      "expo-font"
+      "expo-font",
+      "expo-notifications"
     ],
     "extra": {
       "eas": {

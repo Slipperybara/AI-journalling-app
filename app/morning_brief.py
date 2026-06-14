@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from . import analytics, goals as goals_svc
+from . import analytics, goals as goals_svc, push
 from .bot import store_assistant_message
 from .core import client
 from .db import connect
@@ -78,6 +78,12 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
         "has_pattern_data": _has_pattern_data(context),
         "active_goals_count": len(context["active_goals"]),
     })
+    push.send_push_to_user(
+        user_id,
+        title="Good morning",
+        body="Your reflection from yesterday is ready.",
+        data={"type": "morning_brief", "conversation_id": conv_id},
+    )
     return {"status": "posted", "day": day, "conversation_id": conv_id}
 
 

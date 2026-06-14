@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
 import { listConversations } from '../lib/chat';
+import { registerForPushNotifications } from '../lib/notifications';
 import { ChatScreen } from './ChatScreen';
 import { ConversationsDrawer } from './ConversationsDrawer';
 import { DashboardScreen } from './DashboardScreen';
@@ -21,6 +22,9 @@ export function MainScreen() {
       if (convs.length) setConvId(convs[0].id);
       setBooting(false);
     })();
+    // Register for push (morning-brief notifications). No-op on simulator /
+    // when denied; only effective in a real build with push entitlements.
+    registerForPushNotifications();
   }, []);
 
   return (
