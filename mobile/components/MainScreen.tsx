@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 
 import { listConversations } from '../lib/chat';
 import { registerForPushNotifications } from '../lib/notifications';
@@ -28,7 +29,13 @@ export function MainScreen() {
   }, []);
 
   return (
-    <View className="flex-1 bg-paper">
+    // Full-screen keyboard avoidance lives here (above the tab content) so the
+    // chat input is never undershot by the TopBar's height — see the
+    // react-native-keyboard-controller "header offset" caveat.
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      className="flex-1 bg-paper"
+    >
       <TopBar view={view} onChange={setView} onMenu={view === 'chat' ? () => setDrawerOpen(true) : undefined} />
       <View className="flex-1">
         {view === 'chat' ? (
@@ -50,6 +57,6 @@ export function MainScreen() {
           setDrawerOpen(false);
         }}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }

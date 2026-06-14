@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, FlatList, Platform, Pressable, Text, TextInput, View } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { ActivityIndicator, Animated, FlatList, Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createConversation, getMessages, streamReply, type Message } from '../lib/chat';
@@ -96,6 +95,7 @@ export function ChatScreen({
     const text = input.trim();
     if (!text || sending) return;
     setInput('');
+    Keyboard.dismiss(); // drop the keyboard on submit so the reply has the canvas
 
     // /goal slash-commands run before touching a conversation. `list` and
     // errors inject a local-only message and stop; a successful mutation falls
@@ -181,10 +181,7 @@ export function ChatScreen({
   const canSend = input.trim().length > 0 && !sending;
 
   return (
-    <KeyboardAvoidingView
-      className="flex-1 bg-paper"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View className="flex-1 bg-paper">
       <FlatList
         ref={listRef}
         className="flex-1"
@@ -243,6 +240,6 @@ export function ChatScreen({
           )}
         </View>
       </SafeAreaView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }

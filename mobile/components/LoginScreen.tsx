@@ -5,6 +5,8 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 
 import { useAuth } from '../lib/auth';
 import { SUPABASE_CONFIGURED } from '../lib/supabase';
+import { fonts } from '../lib/theme';
+import { GoogleLogo } from './GoogleLogo';
 
 export function LoginScreen() {
   const { signInWithGoogle, signInWithApple } = useAuth();
@@ -42,12 +44,18 @@ export function LoginScreen() {
           <Pressable
             onPress={() => run('google', signInWithGoogle)}
             disabled={busy !== null}
-            className="h-12 items-center justify-center rounded-2xl bg-ink active:opacity-80"
+            className="w-full flex-row items-center justify-center active:opacity-80"
+            style={{ height: 48, borderRadius: 16, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DADCE0' }}
           >
             {busy === 'google' ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color="#3C4043" />
             ) : (
-              <Text className="text-base font-medium text-white">Continue with Google</Text>
+              <>
+                <GoogleLogo size={18} />
+                <Text style={{ fontFamily: fonts.sansMedium, fontSize: 16, color: '#3C4043', marginLeft: 10 }}>
+                  Continue with Google
+                </Text>
+              </>
             )}
           </Pressable>
 
