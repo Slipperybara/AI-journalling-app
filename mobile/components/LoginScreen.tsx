@@ -45,7 +45,7 @@ export function LoginScreen() {
             onPress={() => run('google', signInWithGoogle)}
             disabled={busy !== null}
             className="w-full flex-row items-center justify-center active:opacity-80"
-            style={{ height: 48, borderRadius: 16, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DADCE0' }}
+            style={{ height: 48, borderRadius: 24, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DADCE0' }}
           >
             {busy === 'google' ? (
               <ActivityIndicator color="#3C4043" />
@@ -63,7 +63,7 @@ export function LoginScreen() {
             <AppleAuthentication.AppleAuthenticationButton
               buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
               buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-              cornerRadius={16}
+              cornerRadius={24}
               style={{ height: 48, width: '100%' }}
               onPress={() => run('apple', signInWithApple)}
             />

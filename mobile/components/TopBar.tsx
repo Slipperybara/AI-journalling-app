@@ -33,7 +33,7 @@ export function TopBar({
 }) {
   const { signOut } = useAuth();
   return (
-    <SafeAreaView edges={['top']} className="bg-paper">
+    <SafeAreaView edges={['top']}>
       <View className="flex-row items-center justify-between px-5 pb-3 pt-1">
         <View className="flex-row items-center" style={{ gap: 16 }}>
           {onMenu ? (

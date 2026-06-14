@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
-import { getOffering, purchasePackage, restorePurchases } from '../lib/purchases';
+import { addEntitlementListener, getOffering, purchasePackage, restorePurchases } from '../lib/purchases';
 import { fonts } from '../lib/theme';
 
 const BENEFITS = [
@@ -87,6 +87,13 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Auto-dismiss the moment RevenueCat confirms premium — even if it lands
+  // slightly after purchasePackage() resolves (the sandbox/StoreKit delay that
+  // was stranding users on the paywall after a successful charge).
+  const onPurchasedRef = useRef(onPurchased);
+  onPurchasedRef.current = onPurchased;
+  useEffect(() => addEntitlementListener(() => onPurchasedRef.current()), []);
+
   useEffect(() => {
     getOffering().then((o) => {
       const pkgs = o?.availablePackages ?? [];
@@ -105,9 +112,13 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
   const subscribe = async () => {
     if (!selected) return;
     setBusy(true);
-    const ok = await purchasePackage(selected);
+    const res = await purchasePackage(selected);
     setBusy(false);
-    if (ok) onPurchased();
+    if (res.ok) {
+      onPurchased();
+    } else if (!res.userCancelled && res.message) {
+      Alert.alert('Just a moment', res.message);
+    }
   };
 
   const restore = async () => {

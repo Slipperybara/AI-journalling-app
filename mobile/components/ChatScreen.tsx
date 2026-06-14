@@ -57,10 +57,12 @@ export function ChatScreen({
   convId,
   booting,
   onConvCreated,
+  onRetrieval,
 }: {
   convId: number | null;
   booting: boolean;
   onConvCreated: (id: number) => void;
+  onRetrieval?: (phase: 'start' | 'end') => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
@@ -138,11 +140,13 @@ export function ChatScreen({
     scrollToEnd();
 
     await streamReply(id, text, {
+      onRetrieval: (phase) => onRetrieval?.(phase),
       onDelta: (t) => {
         setStreamText((s) => s + t);
         scrollToEnd();
       },
       onDone: () => {
+        onRetrieval?.('end'); // ensure the tint resets even if the graph path skipped retrieval_end
         setStreamText((s) => {
           if (s.trim()) {
             setMessages((m) => [
@@ -156,6 +160,7 @@ export function ChatScreen({
         scrollToEnd();
       },
       onError: (msg) => {
+        onRetrieval?.('end');
         setSending(false);
         setStreamText('');
         setMessages((m) => [
@@ -164,7 +169,7 @@ export function ChatScreen({
         ]);
       },
     });
-  }, [input, sending, convId, scrollToEnd, onConvCreated]);
+  }, [input, sending, convId, scrollToEnd, onConvCreated, onRetrieval]);
 
   if (booting || loadingMsgs) {
     return (
@@ -181,7 +186,7 @@ export function ChatScreen({
   const canSend = input.trim().length > 0 && !sending;
 
   return (
-    <View className="flex-1 bg-paper">
+    <View className="flex-1">
       <FlatList
         ref={listRef}
         className="flex-1"
@@ -212,7 +217,7 @@ export function ChatScreen({
         }
       />
 
-      <SafeAreaView edges={['bottom']} className="bg-paper">
+      <SafeAreaView edges={['bottom']}>
         <View className="flex-row items-end px-5 pb-2 pt-2" style={{ gap: 10 }}>
           <TextInput
             className="flex-1"
