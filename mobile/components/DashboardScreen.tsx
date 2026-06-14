@@ -4,6 +4,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react
 import { getDashboard, type DashboardData } from '../lib/dashboard';
 import { avg, emotionalScore, fmtScore, last7Days, physicalScore, weekdayShort } from '../lib/scoring';
 import { colors, fonts } from '../lib/theme';
+import { Mascot } from './Mascot';
 
 const CHART_H = 88;
 
@@ -198,6 +199,11 @@ export function DashboardScreen() {
         />
       }
     >
+      <View className="mb-5 flex-row items-center" style={{ gap: 12 }}>
+        <Mascot mood="happy" size={56} />
+        <Text style={{ fontFamily: fonts.serifMedium, fontSize: 26, color: '#2A2825' }}>Hi there</Text>
+      </View>
+
       {data?.summary ? (
         <Text
           className="mb-7"

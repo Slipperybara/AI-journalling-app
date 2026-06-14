@@ -39,19 +39,25 @@ function JournalMessage({ message }: { message: Message }) {
   );
 }
 
-function PulsingDot() {
-  const op = useRef(new Animated.Value(0.25)).current;
+// While JAI is thinking (before the first token streams), a small duck softly
+// flashes in place of the old typing dot.
+function ThinkingDuck() {
+  const op = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(op, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(op, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 1, duration: 650, useNativeDriver: true }),
+        Animated.timing(op, { toValue: 0.4, duration: 650, useNativeDriver: true }),
       ]),
     );
     loop.start();
     return () => loop.stop();
   }, [op]);
-  return <Animated.View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#8E8B83', opacity: op }} />;
+  return (
+    <Animated.View style={{ opacity: op }}>
+      <Mascot mood="thinkExcited" size={64} />
+    </Animated.View>
+  );
 }
 
 export function ChatScreen({
@@ -215,7 +221,7 @@ export function ChatScreen({
         ListFooterComponent={
           sending ? (
             <View className="mb-6 mt-1">
-              {streamText ? <Markdown content={streamText} style={aiText} /> : <PulsingDot />}
+              {streamText ? <Markdown content={streamText} style={aiText} /> : <ThinkingDuck />}
             </View>
           ) : null
         }
