@@ -5,6 +5,7 @@ import { track } from '../../lib/analytics';
 import { registerForPushNotifications } from '../../lib/notifications';
 import { flattenAnswers, saveAnswers, type OnboardingAnswers } from '../../lib/onboardingProfile';
 import { fonts } from '../../lib/theme';
+import { Mascot, type MascotMood } from '../Mascot';
 import { ChoiceGroup } from './ChoiceGroup';
 import { HoldToCommit } from './HoldToCommit';
 import { OnboardingScaffold } from './OnboardingScaffold';
@@ -63,9 +64,10 @@ function Heading({ title, subtitle }: { title: string; subtitle?: string }) {
   );
 }
 
-function StoryView({ title, body }: { title: string; body: string }) {
+function StoryView({ title, body, mood }: { title: string; body: string; mood?: MascotMood }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center' }}>
+      {mood ? <Mascot mood={mood} size={108} style={{ marginBottom: 20 }} /> : null}
       <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>
         {renderRich(title, '#2A2825')}
       </Text>
@@ -143,11 +145,16 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   switch (key) {
     case 'welcome':
       content = (
-        <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Text style={{ fontFamily: fonts.serifMedium, fontSize: 40, lineHeight: 46, color: '#2A2825' }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Mascot mood="happy" size={168} style={{ marginBottom: 24 }} />
+          <Text
+            style={{ fontFamily: fonts.serifMedium, fontSize: 40, lineHeight: 46, color: '#2A2825', textAlign: 'center' }}
+          >
             Welcome to JAI
           </Text>
-          <Text style={{ fontFamily: fonts.serif, fontSize: 19, lineHeight: 30, color: '#6E6B64', marginTop: 16 }}>
+          <Text
+            style={{ fontFamily: fonts.serif, fontSize: 19, lineHeight: 30, color: '#6E6B64', marginTop: 16, textAlign: 'center' }}
+          >
             Your warm companion for clearer, calmer days — let&apos;s set things up in a minute.
           </Text>
         </View>
@@ -237,6 +244,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'benefit':
       content = (
         <StoryView
+          mood="thinkExcited"
           title="Journaling works."
           body="It's scientifically shown to ease anxiety, bring emotional clarity, and even improve your sleep and focus."
         />
@@ -245,13 +253,14 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       break;
 
     case 'tailored':
-      content = <StoryView title={tailored.title} body={tailored.body} />;
+      content = <StoryView mood="sad" title={tailored.title} body={tailored.body} />;
       footer = <PrimaryButton label="Continue" onPress={next} />;
       break;
 
     case 'stat':
       content = (
         <StoryView
+          mood="thinkSad"
           title="But here's the catch."
           body="Studies show that even with all these benefits, around ==70% of people== say they couldn't stick with journaling after a while — it's just hard to keep up alone."
         />
@@ -262,6 +271,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'reread':
       content = (
         <StoryView
+          mood="writing"
           title="Also…"
           body="Most of journaling's power comes from ==rereading== your past entries — and almost nobody ever does. It's the part that quietly gets skipped."
         />
@@ -272,6 +282,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'reveal1':
       content = (
         <StoryView
+          mood="happy"
           title="So we made it effortless."
           body="JAI turns journaling into a warm conversation. You just talk — it listens, remembers, and gently asks the right questions."
         />
@@ -282,6 +293,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'reveal2':
       content = (
         <StoryView
+          mood="thinkExcited"
           title="And it rereads for you."
           body="JAI quietly ==connects the dots== across your days, ==tracks your patterns==, and is ready with ==grounded advice== whenever you ask."
         />
@@ -313,6 +325,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'notifications':
       content = (
         <View style={{ flex: 1, justifyContent: 'center' }}>
+          <Mascot mood="writing" size={108} style={{ marginBottom: 20 }} />
           <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>
             One last thing.
           </Text>

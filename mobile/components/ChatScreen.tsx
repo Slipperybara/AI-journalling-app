@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { createConversation, getMessages, streamReply, type Message } from '../lib/chat';
 import { tryGoalCommand } from '../lib/goals';
 import { fonts } from '../lib/theme';
+import { Mascot } from './Mascot';
 import { Markdown } from './Markdown';
 
 const userText = {
@@ -205,7 +206,10 @@ export function ChatScreen({
         }
         ListEmptyComponent={
           !sending ? (
-            <Text style={{ ...aiText, marginTop: 8 }}>What&apos;s on your mind?</Text>
+            <View style={{ alignItems: 'center', marginTop: 36 }}>
+              <Mascot mood="base" size={132} />
+              <Text style={{ ...aiText, marginTop: 14, textAlign: 'center' }}>What&apos;s on your mind?</Text>
+            </View>
           ) : null
         }
         ListFooterComponent={
