@@ -18,7 +18,7 @@ const TERMS_URL = 'https://ai-journalling-app-frontend.vercel.app/terms';
 const PRIVACY_URL = 'https://ai-journalling-app-frontend.vercel.app/privacy';
 
 function priceLine(pkg: PurchasesPackage | null): string {
-  if (!pkg) return '7 days free, then $6.99 / month';
+  if (!pkg) return '3 days free, then $6.99 / month';
   const price = pkg.product.priceString;
   const intro = pkg.product.introPrice;
   if (intro && intro.periodNumberOfUnits > 0) {
