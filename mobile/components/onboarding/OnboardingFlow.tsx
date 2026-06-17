@@ -13,6 +13,10 @@ import { OnboardingScaffold } from './OnboardingScaffold';
 const AGE = ['Under 18', '18–24', '25–34', '35–44', '45–54', '55+'];
 const GENDER = ['Female', 'Male', 'Non-binary', 'Prefer not to say'];
 const OCCUPATION = ['Student', 'Working professional', 'Self-employed', 'Parent / caregiver', 'Between things', 'Other'];
+// First option is the "super positive" state — it reframes the later issues page
+// ("what's weighing on you" → "what could be even better").
+const EMOTIONAL = ['I feel great', 'Pretty good', 'Up and down', 'Running low', 'Really struggling'];
+const SUPER_POSITIVE = EMOTIONAL[0];
 const FAMILIARITY = [
   'I journal regularly',
   "I've tried, but it never stuck",
@@ -33,24 +37,35 @@ const TAILORED: Record<string, { title: string; body: string }> = {
 const STEPS = [
   'welcome',
   'name', 'age', 'gender', 'occupation',
-  'familiarity', 'issues',
-  'benefit', 'tailored', 'stat', 'reread', 'reveal1', 'reveal2',
+  'emotional', 'familiarity', 'issues',
+  'tailored', 'benefit', 'stat', 'reread', 'reveal1', 'reveal2',
   'commit', 'notifications',
 ] as const;
 
 // Keyword highlighting: wrap a phrase in ==double-equals== and it renders with a
 // soft yellow marker behind it (mirrors the web app's `==…==` highlight).
 const HL_BG = 'rgba(232,191,90,0.38)';
+// Highlight word-by-word rather than wrapping the whole phrase in one <Text>.
+// A single highlighted <Text> that wraps paints its background across the empty
+// space to the line edge — so multi-word highlights left ugly yellow bars at
+// line breaks. Backing only the words (spaces stay un-painted) keeps the marker
+// snug to the text on every line.
 function renderRich(text: string, color: string): ReactNode[] {
-  return text.split(/(==[^=]+==)/g).map((seg, i) =>
-    seg.startsWith('==') && seg.endsWith('==') ? (
-      <Text key={i} style={{ backgroundColor: HL_BG, color }}>
-        {seg.slice(2, -2)}
-      </Text>
-    ) : (
-      seg
-    ),
-  );
+  return text.split(/(==[^=]+==)/g).flatMap((seg, i) => {
+    if (!(seg.startsWith('==') && seg.endsWith('=='))) return [seg];
+    return seg
+      .slice(2, -2)
+      .split(/(\s+)/)
+      .map((part, j) =>
+        part.trim() === '' ? (
+          part
+        ) : (
+          <Text key={`${i}-${j}`} style={{ backgroundColor: HL_BG, color }}>
+            {part}
+          </Text>
+        ),
+      );
+  });
 }
 
 function Heading({ title, subtitle }: { title: string; subtitle?: string }) {
@@ -221,6 +236,16 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.occupation} />;
       break;
 
+    case 'emotional':
+      content = (
+        <>
+          <Heading title="How's your emotional health lately?" subtitle="No wrong answer — just where you are." />
+          <ChoiceGroup options={EMOTIONAL} value={answers.emotional} onChange={(v) => set('emotional', v)} />
+        </>
+      );
+      footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.emotional} />;
+      break;
+
     case 'familiarity':
       content = (
         <>
@@ -231,15 +256,22 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.familiarity} />;
       break;
 
-    case 'issues':
+    case 'issues': {
+      // When the user reports feeling great, reframe the same multi-select from
+      // "what's weighing on you" to "what could be even better".
+      const positive = answers.emotional === SUPER_POSITIVE;
       content = (
         <>
-          <Heading title="What's weighing on you right now?" subtitle="Pick all that apply." />
+          <Heading
+            title={positive ? 'What could be even better?' : "What's weighing on you right now?"}
+            subtitle="Pick all that apply."
+          />
           <ChoiceGroup multi options={ISSUES} value={answers.issues ?? []} onChange={(v) => set('issues', v)} />
         </>
       );
       footer = <PrimaryButton label="Continue" onPress={next} disabled={!answers.issues?.length} />;
       break;
+    }
 
     case 'benefit':
       content = (

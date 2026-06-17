@@ -25,11 +25,23 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         </Text>,
       );
     } else if (tok.startsWith('==')) {
-      out.push(
-        <Text key={key} style={{ backgroundColor: HIGHLIGHT_BG }}>
-          {tok.slice(2, -2)}
-        </Text>,
-      );
+      // Back each word, not the whole phrase: a single highlighted <Text> that
+      // wraps paints its background out to the line edge, leaving blank yellow
+      // bars at line breaks. Per-word backing keeps the marker snug to the text.
+      tok
+        .slice(2, -2)
+        .split(/(\s+)/)
+        .forEach((part, j) =>
+          out.push(
+            part.trim() === '' ? (
+              part
+            ) : (
+              <Text key={`${key}-${j}`} style={{ backgroundColor: HIGHLIGHT_BG }}>
+                {part}
+              </Text>
+            ),
+          ),
+        );
     } else {
       out.push(
         <Text key={key} style={{ fontFamily: fonts.serifItalic }}>

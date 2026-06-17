@@ -5,6 +5,7 @@ export type OnboardingAnswers = {
   age?: string;
   gender?: string;
   occupation?: string;
+  emotional?: string;
   familiarity?: string;
   issues?: string[];
 };
@@ -35,6 +36,7 @@ export function flattenAnswers(a: OnboardingAnswers): Record<string, string> {
     age: a.age ?? '',
     gender: a.gender ?? '',
     occupation: a.occupation ?? '',
+    emotional: a.emotional ?? '',
     familiarity: a.familiarity ?? '',
     issues: (a.issues ?? []).join(', '),
   };
