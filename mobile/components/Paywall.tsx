@@ -3,8 +3,51 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
-import { addEntitlementListener, getOffering, purchasePackage, restorePurchases } from '../lib/purchases';
+import {
+  addEntitlementListener,
+  getOffering,
+  getTrialEligibility,
+  purchasePackage,
+  restorePurchases,
+} from '../lib/purchases';
 import { fonts } from '../lib/theme';
+
+type Eligibility = Record<string, boolean>;
+
+// Human-readable intro period straight from StoreKit, e.g. P1W → "1 week".
+function introDurationLabel(unit: string, count: number): string {
+  const word =
+    ({ DAY: 'day', WEEK: 'week', MONTH: 'month', YEAR: 'year' } as Record<string, string>)[unit] ??
+    unit.toLowerCase();
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+// The package's intro offer IF this account can still claim it. Returns null
+// when there is no offer or the trial was already used — so the UI never
+// promises something Apple won't honor.
+function eligibleIntro(pkg: PurchasesPackage, eligible: Eligibility) {
+  const intro = pkg.product.introPrice;
+  if (!intro) return null;
+  if (eligible[pkg.product.identifier] === false) return null;
+  return intro;
+}
+
+// Short "N days/weeks free" badge for a card — only for a genuine free trial.
+function freeTrialLabel(pkg: PurchasesPackage, eligible: Eligibility): string | null {
+  const intro = eligibleIntro(pkg, eligible);
+  if (!intro || intro.price !== 0) return null;
+  return `${introDurationLabel(intro.periodUnit, intro.periodNumberOfUnits)} free`;
+}
+
+// Full price/offer line for the selected plan, e.g.
+// "1 week free, then $39.99 / year" or, with no trial, "$4.99 / month".
+function offerSummary(pkg: PurchasesPackage, eligible: Eligibility): string {
+  const base = `${pkg.product.priceString} / ${isAnnual(pkg) ? 'year' : 'month'}`;
+  const intro = eligibleIntro(pkg, eligible);
+  if (!intro) return base;
+  const dur = introDurationLabel(intro.periodUnit, intro.periodNumberOfUnits);
+  return intro.price === 0 ? `${dur} free, then ${base}` : `${intro.priceString} for ${dur}, then ${base}`;
+}
 
 const BENEFITS = [
   'Unlimited conversations with JAI',
@@ -43,11 +86,13 @@ function PlanCard({
   selected,
   onPress,
   badge,
+  trialLabel,
 }: {
   pkg: PurchasesPackage;
   selected: boolean;
   onPress: () => void;
   badge?: string;
+  trialLabel?: string | null;
 }) {
   const annual = isAnnual(pkg);
   const period = annual ? 'year' : 'month';
@@ -77,6 +122,11 @@ function PlanCard({
         {pkg.product.priceString} / {period}
         {perMonth ? `   ·   ${perMonth} / mo` : ''}
       </Text>
+      {trialLabel ? (
+        <Text style={{ fontFamily: fonts.sansMedium, fontSize: 13, color: '#6E9B7A', marginTop: 4 }}>
+          {trialLabel}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -84,6 +134,7 @@ function PlanCard({
 export function Paywall({ onPurchased }: { onPurchased: () => void }) {
   const [packages, setPackages] = useState<PurchasesPackage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [eligible, setEligible] = useState<Eligibility>({});
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -101,6 +152,8 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
       const annual = pkgs.find(isAnnual);
       setSelectedId((annual ?? pkgs[0])?.identifier ?? null);
       setLoaded(true);
+      const ids = pkgs.map((p) => p.product.identifier);
+      if (ids.length) getTrialEligibility(ids).then(setEligible);
     });
   }, []);
 
@@ -108,6 +161,8 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
   const annual = packages.find(isAnnual);
   const selected = packages.find((p) => p.identifier === selectedId) ?? null;
   const save = savingsPct(monthly, annual);
+  const selectedIntro = selected ? eligibleIntro(selected, eligible) : null;
+  const ctaLabel = selectedIntro && selectedIntro.price === 0 ? 'Start free trial' : 'Subscribe';
 
   const subscribe = async () => {
     if (!selected) return;
@@ -128,9 +183,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
     if (ok) onPurchased();
   };
 
-  const priceSummary = selected
-    ? `3 days free, then ${selected.product.priceString} / ${isAnnual(selected) ? 'year' : 'month'}`
-    : '3 days free, then choose your plan';
+  const priceSummary = selected ? offerSummary(selected, eligible) : 'Choose your plan';
 
   return (
     <SafeAreaView className="flex-1 bg-paper">
@@ -162,6 +215,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
                   selected={selectedId === annual.identifier}
                   onPress={() => setSelectedId(annual.identifier)}
                   badge={save ? `Save ${save}%` : 'Best value'}
+                  trialLabel={freeTrialLabel(annual, eligible)}
                 />
               ) : null}
               {monthly ? (
@@ -169,6 +223,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
                   pkg={monthly}
                   selected={selectedId === monthly.identifier}
                   onPress={() => setSelectedId(monthly.identifier)}
+                  trialLabel={freeTrialLabel(monthly, eligible)}
                 />
               ) : null}
             </View>
@@ -197,7 +252,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
             {busy ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={{ fontFamily: fonts.sansMedium, fontSize: 16, color: '#fff' }}>Start free trial</Text>
+              <Text style={{ fontFamily: fonts.sansMedium, fontSize: 16, color: '#fff' }}>{ctaLabel}</Text>
             )}
           </Pressable>
 

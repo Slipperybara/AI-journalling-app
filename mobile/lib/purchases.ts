@@ -1,4 +1,5 @@
 import Purchases, {
+  INTRO_ELIGIBILITY_STATUS,
   type CustomerInfo,
   type PurchasesOffering,
   type PurchasesPackage,
@@ -52,6 +53,28 @@ export function addEntitlementListener(onActive: () => void): () => void {
   };
   Purchases.addCustomerInfoUpdateListener(listener);
   return () => Purchases.removeCustomerInfoUpdateListener(listener);
+}
+
+// Maps each productId → whether THIS Apple ID may still claim its intro offer
+// (free trial). Apple grants an intro offer once per subscription group per
+// account, so a returning subscriber who already used the trial must NOT be
+// shown "free trial" copy. We only positively hide the trial on INELIGIBLE;
+// UNKNOWN is treated as eligible (the common new-user case, and Apple shows the
+// real terms on the purchase sheet regardless). Fails open to {} (assume
+// eligible) so a transient error never strips a genuine offer from new users.
+export async function getTrialEligibility(productIds: string[]): Promise<Record<string, boolean>> {
+  if (!PURCHASES_ENABLED || productIds.length === 0) return {};
+  try {
+    const result = await Purchases.checkTrialOrIntroductoryPriceEligibility(productIds);
+    const out: Record<string, boolean> = {};
+    for (const [id, eligibility] of Object.entries(result)) {
+      out[id] =
+        eligibility.status !== INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_INELIGIBLE;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export async function getOffering(): Promise<PurchasesOffering | null> {
