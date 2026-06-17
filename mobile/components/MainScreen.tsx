@@ -5,6 +5,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { listConversations } from '../lib/chat';
+import { syncNotificationPrefs } from '../lib/notificationPrefs';
 import { registerForPushNotifications } from '../lib/notifications';
 import { syncOnboardingProfile } from '../lib/profile';
 import { AmbientBackground } from './AmbientBackground';
@@ -43,6 +44,9 @@ export function MainScreen() {
     // One-time: push onboarding answers to the backend so the bot's first
     // replies already know the user. Best-effort, idempotent.
     syncOnboardingProfile();
+    // Sync the morning-notification time chosen during onboarding (PUT needs
+    // auth, which we now have). Idempotent; the drawer setting keeps it current.
+    syncNotificationPrefs();
   }, []);
 
   return (

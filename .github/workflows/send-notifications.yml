@@ -1,0 +1,38 @@
+name: Send due notifications
+
+# Fires every 15 minutes. Hits the HMAC-protected delivery webhook, which sends
+# each user's morning-brief push once their local clock reaches their chosen
+# time. Idempotent (per brief-day dedup), so overlapping/extra runs are no-ops.
+#
+# GitHub's scheduled runners can lag a few minutes under load — fine here, since
+# delivery only needs to land near the user's chosen time, and dedup prevents
+# double-sends.
+#
+# Required repo secrets (same as the nightly batch):
+#   RENDER_URL            — https://<your-service>.onrender.com
+#   BATCH_WEBHOOK_SECRET  — same string set as BATCH_WEBHOOK_SECRET on Render
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/admin/send-due-notifications
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "X-Webhook-Secret: ${{ secrets.BATCH_WEBHOOK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.RENDER_URL }}/api/admin/send-due-notifications")
+          body=$(echo "$response" | sed '$d')
+          status=$(echo "$response" | tail -n1)
+          echo "HTTP $status"
+          echo "$body" | head -c 2000
+          if [ "$status" != "200" ]; then
+            echo "notify webhook returned non-200" >&2
+            exit 1
+          fi

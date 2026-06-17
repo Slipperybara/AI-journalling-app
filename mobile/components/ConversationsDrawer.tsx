@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../lib/auth';
 import { deleteConversation, listConversations, renameConversation, type Conversation } from '../lib/chat';
 import { colors, fonts } from '../lib/theme';
+import { NotificationSettings } from './NotificationSettings';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const DRAWER_W = Math.min(330, Math.round(SCREEN_W * 0.82));
@@ -53,6 +54,7 @@ export function ConversationsDrawer({
 }) {
   const { signOut } = useAuth();
   const [convs, setConvs] = useState<Conversation[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [mounted, setMounted] = useState(open);
   const tx = useRef(new Animated.Value(-DRAWER_W)).current;
   const fade = useRef(new Animated.Value(0)).current;
@@ -221,13 +223,25 @@ export function ConversationsDrawer({
           />
 
           <Pressable
-            onPress={signOut}
+            onPress={() => setNotifOpen(true)}
             style={{ paddingHorizontal: 18, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.line }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>
+              ⏰  Morning reflection
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={signOut}
+            style={{ paddingHorizontal: 18, paddingVertical: 14 }}
             android_ripple={{ color: colors.line }}
           >
             <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>Sign out</Text>
           </Pressable>
         </SafeAreaView>
+
+        <NotificationSettings open={notifOpen} onClose={() => setNotifOpen(false)} />
       </Animated.View>
     </View>
   );

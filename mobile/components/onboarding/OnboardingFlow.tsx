@@ -3,9 +3,11 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { track } from '../../lib/analytics';
 import { registerForPushNotifications } from '../../lib/notifications';
+import { saveLocalNotifyChoice } from '../../lib/notificationPrefs';
 import { flattenAnswers, saveAnswers, type OnboardingAnswers } from '../../lib/onboardingProfile';
 import { fonts } from '../../lib/theme';
 import { Mascot, type MascotMood } from '../Mascot';
+import { TimePicker } from '../TimePicker';
 import { ChoiceGroup } from './ChoiceGroup';
 import { HoldToCommit } from './HoldToCommit';
 import { OnboardingScaffold } from './OnboardingScaffold';
@@ -115,6 +117,8 @@ function PrimaryButton({ label, onPress, disabled }: { label: string; onPress: (
 export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<OnboardingAnswers>({ issues: [] });
+  const [notifyHour, setNotifyHour] = useState(8);
+  const [notifyMinute, setNotifyMinute] = useState(0);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -147,6 +151,15 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
 
   const enableNotifications = async () => {
     await registerForPushNotifications();
+    // Stash the chosen time locally; it's PUT to the backend after login
+    // (onboarding runs unauthenticated).
+    await saveLocalNotifyChoice({ enabled: true, hour: notifyHour, minute: notifyMinute });
+    track('onboarding_answer', { key: 'notify_time', value: `${notifyHour}:${notifyMinute}` });
+    finish();
+  };
+
+  const skipNotifications = async () => {
+    await saveLocalNotifyChoice({ enabled: false, hour: notifyHour, minute: notifyMinute });
     finish();
   };
 
@@ -357,19 +370,29 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'notifications':
       content = (
         <View style={{ flex: 1, justifyContent: 'center' }}>
-          <Mascot mood="writing" size={108} style={{ marginBottom: 20 }} />
-          <Text style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825' }}>
-            One last thing.
+          <Mascot mood="writing" size={96} style={{ marginBottom: 16 }} />
+          <Text style={{ fontFamily: fonts.serifMedium, fontSize: 28, lineHeight: 36, color: '#2A2825' }}>
+            When should JAI check in?
           </Text>
-          <Text style={{ fontFamily: fonts.serif, fontSize: 18, lineHeight: 28, color: '#6E6B64', marginTop: 16 }}>
-            Each morning, JAI sends you that reflection on your yesterday — the gentle nudge that turns reflection into a daily habit.
+          <Text style={{ fontFamily: fonts.serif, fontSize: 17, lineHeight: 26, color: '#6E6B64', marginTop: 12 }}>
+            Each morning, JAI sends you a reflection on your yesterday — pick the time it lands.
           </Text>
+          <View style={{ marginTop: 8 }}>
+            <TimePicker
+              hour={notifyHour}
+              minute={notifyMinute}
+              onChange={(h, m) => {
+                setNotifyHour(h);
+                setNotifyMinute(m);
+              }}
+            />
+          </View>
         </View>
       );
       footer = (
         <View style={{ gap: 12 }}>
           <PrimaryButton label="Enable notifications" onPress={enableNotifications} />
-          <Pressable onPress={finish} hitSlop={8} style={{ alignItems: 'center', paddingVertical: 4 }}>
+          <Pressable onPress={skipNotifications} hitSlop={8} style={{ alignItems: 'center', paddingVertical: 4 }}>
             <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: '#9A9790' }}>Maybe later</Text>
           </Pressable>
         </View>

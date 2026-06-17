@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from . import analytics, goals as goals_svc, push
+from . import analytics, goals as goals_svc
 from .bot import store_assistant_message
 from .core import client
 from .db import connect
@@ -72,18 +72,18 @@ def post_morning_brief(day: str, user_id: UUID) -> dict:
         _log(day, status="failed", conversation_id=0, user_id=user_id, error=str(exc))
         return {"status": "failed", "day": day, "error": str(exc)}
 
-    _log(day, status="posted", conversation_id=conv_id, user_id=user_id, brief_text=brief)
+    # Store the pre-rendered push body alongside the brief. Delivery is deferred
+    # to the notify_delivery cron, which sends it at the user's chosen local time
+    # (see app/notify_delivery.py) — generation no longer pushes directly.
+    _log(
+        day, status="posted", conversation_id=conv_id, user_id=user_id,
+        brief_text=brief, push_body=_push_body(context),
+    )
     analytics.capture(user_id, "morning_brief_posted", {
         "is_sparse": context["is_sparse_yesterday"],
         "has_pattern_data": _has_pattern_data(context),
         "active_goals_count": len(context["active_goals"]),
     })
-    push.send_push_to_user(
-        user_id,
-        title="Good morning",
-        body=_push_body(context),
-        data={"type": "morning_brief", "conversation_id": conv_id},
-    )
     return {"status": "posted", "day": day, "conversation_id": conv_id}
 
 
@@ -346,20 +346,22 @@ def _log(
     user_id: UUID,
     error: Optional[str] = None,
     brief_text: Optional[str] = None,
+    push_body: Optional[str] = None,
 ) -> None:
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO morning_brief_log (user_id, day, posted_at, conversation_id, status, error, brief_text)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO morning_brief_log (user_id, day, posted_at, conversation_id, status, error, brief_text, push_body)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id, day) DO UPDATE SET
                 posted_at = excluded.posted_at,
                 conversation_id = excluded.conversation_id,
                 status = excluded.status,
                 error = excluded.error,
-                brief_text = excluded.brief_text
+                brief_text = excluded.brief_text,
+                push_body = excluded.push_body
             """,
-            (str(user_id), day, datetime.now().isoformat(), conversation_id, status, error, brief_text),
+            (str(user_id), day, datetime.now().isoformat(), conversation_id, status, error, brief_text, push_body),
         )
 
 

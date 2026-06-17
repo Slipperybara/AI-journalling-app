@@ -33,7 +33,8 @@
       "expo-web-browser",
       "expo-apple-authentication",
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {
