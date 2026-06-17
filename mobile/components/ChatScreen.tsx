@@ -55,7 +55,7 @@ function ThinkingDuck() {
   }, [op]);
   return (
     <Animated.View style={{ opacity: op }}>
-      <Mascot mood="thinkExcited" size={64} />
+      <Mascot mood="running" size={44} />
     </Animated.View>
   );
 }

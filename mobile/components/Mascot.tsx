@@ -9,6 +9,7 @@ const SOURCES = {
   thinkExcited: require('../assets/mascot/mascot-think-excited.png'),
   thinkSad: require('../assets/mascot/mascot-think-sad.png'),
   writing: require('../assets/mascot/mascot-writing.png'),
+  running: require('../assets/mascot/mascot-running.png'),
 } as const;
 
 export type MascotMood = keyof typeof SOURCES;
