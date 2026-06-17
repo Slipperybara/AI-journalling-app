@@ -150,6 +150,7 @@ REPLY STYLE:
 
 CONTEXT YOU HAVE:
 
+{about_user_block}
 TODAY_TRANSCRIPT (all of today's messages so far, chronological):
 {today_transcript}
 
@@ -172,6 +173,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
     # Lazy import: morning_brief imports store_assistant_message from this
     # module, so a top-level import here would be circular.
     from .morning_brief import get_daily_summaries
+    from .profile import format_about_user, get_profile
 
     now = now or datetime.now()
     today = bucket_for(now)
@@ -204,6 +206,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
         "daily_summaries": daily_summaries,
         "covered_today": sorted(covered),
         "uncovered_today": sorted(all_dims - covered),
+        "about_user": format_about_user(get_profile(user_id)),
     }
 
 
@@ -263,6 +266,7 @@ def _build_reply_messages(
     )
 
     system = ASSISTANT_SYSTEM_TMPL.format(
+        about_user_block=ctx.get("about_user", ""),
         today_transcript=json.dumps(ctx["today_transcript"], indent=2, default=str),
         recent_transcripts=recent_transcripts_str,
         daily_summaries=daily_summaries_str,

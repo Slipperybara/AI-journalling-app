@@ -131,6 +131,25 @@ def init_db() -> None:
             )
         """)
 
+        # Onboarding self-report (one row per user). Captured client-side during
+        # the onboarding funnel and synced once after login. The empathetic bot
+        # reads it so its very first replies already know the user — name, how
+        # they're feeling, what's weighing on them — before any graph data has
+        # accrued. NOT an extraction table; the nightly batch never writes here.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_profile (
+                user_id UUID NOT NULL PRIMARY KEY,
+                name TEXT,
+                age TEXT,
+                gender TEXT,
+                occupation TEXT,
+                emotional TEXT,
+                familiarity TEXT,
+                issues JSONB,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+
         # Push-notification device tokens (one row per device per user). The
         # native app registers its Expo push token here; the nightly batch
         # reads them to send the morning-brief push.

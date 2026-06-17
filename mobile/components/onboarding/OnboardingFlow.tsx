@@ -38,7 +38,7 @@ const STEPS = [
   'welcome',
   'name', 'age', 'gender', 'occupation',
   'emotional', 'familiarity', 'issues',
-  'tailored', 'benefit', 'stat', 'reread', 'reveal1', 'reveal2',
+  'tailored', 'heard', 'stat', 'effortless', 'reread', 'reflection',
   'commit', 'notifications',
 ] as const;
 
@@ -273,12 +273,12 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       break;
     }
 
-    case 'benefit':
+    case 'heard':
       content = (
         <StoryView
-          mood="thinkExcited"
-          title="Journaling works."
-          body="It's scientifically shown to ease anxiety, bring emotional clarity, and even improve your sleep and focus."
+          mood="happy"
+          title="Sometimes you just need to feel heard."
+          body="JAI listens like it has all the time in the world — and answers with real warmth, the moment you need it. ==Not tomorrow. Right now.=="
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
@@ -293,8 +293,8 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       content = (
         <StoryView
           mood="thinkSad"
-          title="But here's the catch."
-          body="Studies show that even with all these benefits, around ==70% of people== say they couldn't stick with journaling after a while — it's just hard to keep up alone."
+          title="But journaling is hard to keep up."
+          body="Even knowing it helps, around ==70% of people== drift away — blank pages, no time, and doing it all alone."
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
@@ -303,31 +303,31 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
     case 'reread':
       content = (
         <StoryView
-          mood="writing"
-          title="Also…"
-          body="Most of journaling's power comes from ==rereading== your past entries — and almost nobody ever does. It's the part that quietly gets skipped."
+          mood="thinkExcited"
+          title="But the real magic is looking back."
+          body="==Yesterday always has something to teach== — most of us just never go back to listen."
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
       break;
 
-    case 'reveal1':
+    case 'effortless':
+      content = (
+        <StoryView
+          mood="writing"
+          title="So we made it effortless."
+          body="No blank page, no prompts to puzzle over — you just talk, like texting a friend who always knows what to ask. And it works: talking through your day is ==one of the most studied ways== to quiet a racing mind."
+        />
+      );
+      footer = <PrimaryButton label="Continue" onPress={next} />;
+      break;
+
+    case 'reflection':
       content = (
         <StoryView
           mood="happy"
-          title="So we made it effortless."
-          body="JAI turns journaling into a warm conversation. You just talk — it listens, remembers, and gently asks the right questions."
-        />
-      );
-      footer = <PrimaryButton label="Continue" onPress={next} />;
-      break;
-
-    case 'reveal2':
-      content = (
-        <StoryView
-          mood="thinkExcited"
-          title="And it rereads for you."
-          body="JAI quietly ==connects the dots== across your days, ==tracks your patterns==, and is ready with ==grounded advice== whenever you ask."
+          title="Wake up to a reflection of yesterday."
+          body="Each morning, JAI hands you yesterday — ==what you felt, what mattered, what to carry forward==. The best version of today starts by ==understanding yesterday==."
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
@@ -362,7 +362,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
             One last thing.
           </Text>
           <Text style={{ fontFamily: fonts.serif, fontSize: 18, lineHeight: 28, color: '#6E6B64', marginTop: 16 }}>
-            Each morning, JAI sends a gentle reflection on your yesterday — the nudge that keeps the habit alive.
+            Each morning, JAI sends you that reflection on your yesterday — the gentle nudge that turns reflection into a daily habit.
           </Text>
         </View>
       );

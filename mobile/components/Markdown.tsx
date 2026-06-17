@@ -3,7 +3,9 @@ import { Text, type TextStyle, View } from 'react-native';
 
 import { fonts } from '../lib/theme';
 
-const HIGHLIGHT_BG = 'rgba(224, 137, 79, 0.20)';
+// Same soft-yellow marker the onboarding story beats use, so highlighting reads
+// consistently across the app (was a warmer orange before).
+const HIGHLIGHT_BG = 'rgba(232, 191, 90, 0.38)';
 
 // Inline tokens, in precedence order: **bold**, ==highlight==, *italic*, _italic_.
 const INLINE = /(\*\*[^*]+\*\*|==[^=]+==|\*[^*\n]+\*|_[^_\n]+_)/g;
