@@ -21,6 +21,7 @@ type AuthContextValue = {
   loading: boolean;
   signInWithGoogle: () => Promise<AuthResult>;
   signInWithApple: () => Promise<AuthResult>;
+  signInWithEmail: (email: string, password: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
 
@@ -85,12 +86,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Email/password sign-in. Primarily for the App Review demo account (OAuth is
+  // awkward for Apple's reviewers), but a valid path for any user. Sign-up is
+  // intentionally not exposed in the app — the demo account is provisioned in
+  // Supabase directly.
+  const signInWithEmail = useCallback(async (email: string, password: string): Promise<AuthResult> => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    return error ? { error: error.message } : {};
+  }, []);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ session, loading, signInWithGoogle, signInWithApple, signOut }}>
+    <AuthContext.Provider
+      value={{ session, loading, signInWithGoogle, signInWithApple, signInWithEmail, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );

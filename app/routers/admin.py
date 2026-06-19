@@ -16,7 +16,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from .. import analytics, dashboard_summary, graph_batch, graph_maintenance, morning_brief
+from .. import analytics, dashboard_summary, graph_batch, graph_maintenance, morning_brief, notify_delivery
 from ..auth import get_current_user_id
 from ..batch import parse_day
 from ..core import settings
@@ -108,6 +108,25 @@ async def run_batch_webhook(
         "users_processed": len(user_ids),
         "results": results,
     }
+
+
+@router.post("/send-due-notifications")
+async def send_due_notifications_webhook(
+    x_webhook_secret: Optional[str] = Header(default=None, alias="X-Webhook-Secret"),
+):
+    """Frequent cron entrypoint (every ~15 min). HMAC-protected; no user auth.
+
+    Sends each user's morning-brief push once their local clock reaches their
+    chosen time. Idempotent — dedup is per brief-day, so extra ticks are no-ops.
+    """
+    if not settings.batch_webhook_secret:
+        raise HTTPException(status_code=503, detail="batch webhook secret not configured")
+    if not x_webhook_secret or not hmac.compare_digest(
+        x_webhook_secret, settings.batch_webhook_secret
+    ):
+        raise HTTPException(status_code=401, detail="invalid webhook secret")
+
+    return notify_delivery.send_due_briefs()
 
 
 @router.post("/parse-day/{day}")

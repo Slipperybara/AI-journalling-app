@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "MindForge",
+    "name": "JAI",
     "slug": "mindforge",
     "scheme": "mindforge",
     "version": "1.0.0",
@@ -8,15 +8,15 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.mindforge.app",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.jaijournal.app",
       "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.mindforge.app",
+      "package": "com.jaijournal.app",
       "adaptiveIcon": {
         "backgroundColor": "#ECE9E4",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -32,7 +32,9 @@
       "expo-secure-store",
       "expo-web-browser",
       "expo-apple-authentication",
-      "expo-font"
+      "expo-font",
+      "expo-notifications",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {

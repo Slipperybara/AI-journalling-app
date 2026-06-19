@@ -4,6 +4,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react
 import { getDashboard, type DashboardData } from '../lib/dashboard';
 import { avg, emotionalScore, fmtScore, last7Days, physicalScore, weekdayShort } from '../lib/scoring';
 import { colors, fonts } from '../lib/theme';
+import { Mascot } from './Mascot';
 
 const CHART_H = 88;
 
@@ -91,15 +92,59 @@ function JournalingTracker({ week }: { week: { day: string; journaled: boolean }
           <View key={w.day} className="flex-1 items-center">
             <View
               style={{
-                width: '100%',
+                width: 30,
                 height: 30,
-                borderRadius: 6,
-                backgroundColor: w.journaled ? colors.journaled : colors.track,
+                borderRadius: 15,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: w.journaled ? colors.journaled : 'transparent',
+                borderWidth: w.journaled ? 0 : 1.5,
+                borderColor: '#DCD7CF',
               }}
-            />
-            <Text className="mt-1 text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
+            >
+              {w.journaled ? (
+                <Text style={{ color: '#fff', fontSize: 14, fontFamily: fonts.sansMedium }}>✓</Text>
+              ) : null}
+            </View>
+            <Text className="mt-1.5 text-faint" style={{ fontSize: 9, fontFamily: fonts.sans }}>
               {weekdayShort(w.day)}
             </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function GoalsStrip({ goals }: { goals: { name: string }[] }) {
+  if (!goals.length) return null;
+  return (
+    <View className="mb-7">
+      <View className="mb-2 flex-row items-baseline justify-between">
+        <Text
+          className="uppercase text-muted"
+          style={{ fontFamily: fonts.sans, fontSize: 11, letterSpacing: 1.2 }}
+        >
+          Goals
+        </Text>
+        <Text style={{ fontFamily: fonts.sans, fontSize: 11, color: '#B7B4AD' }}>
+          {goals.length} of 3 active
+        </Text>
+      </View>
+      <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+        {goals.map((g) => (
+          <View
+            key={g.name}
+            style={{
+              backgroundColor: 'rgba(110,155,122,0.12)',
+              borderColor: 'rgba(110,155,122,0.30)',
+              borderWidth: 1,
+              borderRadius: 999,
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: '#4B6B53' }}>{g.name}</Text>
           </View>
         ))}
       </View>
@@ -162,6 +207,11 @@ export function DashboardScreen() {
         />
       }
     >
+      <View className="mb-5 flex-row items-center" style={{ gap: 12 }}>
+        <Mascot mood="happy" size={56} />
+        <Text style={{ fontFamily: fonts.serifMedium, fontSize: 26, color: '#2A2825' }}>Hi there</Text>
+      </View>
+
       {data?.summary ? (
         <Text
           className="mb-7"
@@ -193,11 +243,13 @@ export function DashboardScreen() {
       />
       <DimensionBars
         title="Exercise"
-        color={colors.exercise}
+        color={colors.emotional}
         days={days}
         scoreByDay={physByDay}
         headline={fmtScore(avg(days.map((d) => physByDay[d])))}
       />
+
+      <GoalsStrip goals={data?.goals?.active ?? []} />
     </ScrollView>
   );
 }
