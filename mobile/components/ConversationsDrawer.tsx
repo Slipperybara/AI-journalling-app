@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useAuth } from '../lib/auth';
 import { deleteConversation, listConversations, renameConversation, type Conversation } from '../lib/chat';
 import { colors, fonts } from '../lib/theme';
+import { AccountSheet } from './AccountSheet';
 import { NotificationSettings } from './NotificationSettings';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -52,9 +52,9 @@ export function ConversationsDrawer({
   onNew: () => void;
   onOpenDashboard: () => void;
 }) {
-  const { signOut } = useAuth();
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [mounted, setMounted] = useState(open);
   const tx = useRef(new Animated.Value(-DRAWER_W)).current;
   const fade = useRef(new Animated.Value(0)).current;
@@ -233,15 +233,33 @@ export function ConversationsDrawer({
           </Pressable>
 
           <Pressable
-            onPress={signOut}
+            onPress={() =>
+              Alert.alert(
+                'Safety & support',
+                "JAI is a journaling companion for reflection — not a medical or mental-health service, " +
+                  'and not a substitute for professional care.\n\n' +
+                  "If you're in crisis or thinking about harming yourself, please reach your local emergency " +
+                  'services or a crisis line right away. In the US, call or text 988 (Suicide & Crisis Lifeline).',
+                [{ text: 'Close', style: 'cancel' }],
+              )
+            }
             style={{ paddingHorizontal: 18, paddingVertical: 14 }}
             android_ripple={{ color: colors.line }}
           >
-            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>Sign out</Text>
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>♡  Safety &amp; support</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => setAccountOpen(true)}
+            style={{ paddingHorizontal: 18, paddingVertical: 14 }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>☺  Account</Text>
           </Pressable>
         </SafeAreaView>
 
         <NotificationSettings open={notifOpen} onClose={() => setNotifOpen(false)} />
+        <AccountSheet open={accountOpen} onClose={() => setAccountOpen(false)} />
       </Animated.View>
     </View>
   );

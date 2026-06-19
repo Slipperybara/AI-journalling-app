@@ -27,23 +27,27 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         </Text>,
       );
     } else if (tok.startsWith('==')) {
-      // Back each word, not the whole phrase: a single highlighted <Text> that
-      // wraps paints its background out to the line edge, leaving blank yellow
-      // bars at line breaks. Per-word backing keeps the marker snug to the text.
+      // Marker-pen highlight. Each word carries its OWN trailing space inside the
+      // backed <Text>, so within a line the stroke reads as one uniform mark
+      // (no ugly gaps between words). RN breaks between these word-Texts and
+      // collapses the trailing space at a soft wrap, so no full-width yellow bar
+      // forms at line breaks. Hard '\n' is emitted un-highlighted between lines.
       tok
         .slice(2, -2)
-        .split(/(\s+)/)
-        .forEach((part, j) =>
-          out.push(
-            part.trim() === '' ? (
-              part
-            ) : (
-              <Text key={`${key}-${j}`} style={{ backgroundColor: HIGHLIGHT_BG }}>
-                {part}
-              </Text>
-            ),
-          ),
-        );
+        .split('\n')
+        .forEach((line, li) => {
+          if (li > 0) out.push('\n');
+          const segs = line.split(/(\s+)/); // [word, ws, word, ws, …]
+          for (let s = 0; s < segs.length; s += 2) {
+            const chunk = (segs[s] ?? '') + (segs[s + 1] ?? '');
+            if (chunk === '') continue;
+            out.push(
+              <Text key={`${key}-${li}-${s}`} style={{ backgroundColor: HIGHLIGHT_BG }}>
+                {chunk}
+              </Text>,
+            );
+          }
+        });
     } else {
       out.push(
         <Text key={key} style={{ fontFamily: fonts.serifItalic }}>
