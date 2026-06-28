@@ -1,4 +1,4 @@
-"""MindForge AI — FastAPI entrypoint."""
+"""JAI — FastAPI entrypoint."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,7 +12,7 @@ from app.routers import (
 )
 
 
-app = FastAPI(title="MindForge AI")
+app = FastAPI(title="JAI")
 
 _cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { PanResponder, Platform, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +25,17 @@ export function MainScreen() {
   // retrieval phase from the stream. Mirrors the web app's tint.
   const [bgMode, setBgMode] = useState<'warm' | 'cool'>('warm');
   const insets = useSafeAreaInsets();
+
+  // Rightward swipe across the content opens the drawer (only claims a clearly
+  // horizontal drag, so vertical scrolls and taps pass through untouched).
+  const openPan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => g.dx > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderRelease: (_e, g) => {
+        if (g.dx > 45) setDrawerOpen(true);
+      },
+    }),
+  ).current;
 
   const today = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -69,7 +80,7 @@ export function MainScreen() {
         keyboardVerticalOffset={insets.bottom}
         className="flex-1"
       >
-        <View className="flex-1">
+        <View className="flex-1" {...openPan.panHandlers}>
           {view === 'chat' ? (
             <ChatScreen
               convId={convId}
