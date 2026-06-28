@@ -53,9 +53,6 @@ def send_due_briefs(now_utc: datetime | None = None) -> dict:
     if now_utc.tzinfo is None:
         now_utc = now_utc.replace(tzinfo=timezone.utc)
 
-    # Only push briefs from today or yesterday (server bucket) — never a stale one.
-    min_day = (bucket_for(now_utc) - timedelta(days=1)).isoformat()
-
     with connect() as conn:
         prefs = conn.execute(
             "SELECT user_id, hour, minute, tz, last_pushed_day "
@@ -75,6 +72,9 @@ def send_due_briefs(now_utc: datetime | None = None) -> dict:
             if local_now < scheduled:
                 continue  # their chosen time hasn't arrived yet today
 
+            # Only push briefs from the user's local today/yesterday — never a
+            # stale one. Computed per-user in their timezone.
+            min_day = (bucket_for(now_utc, p["tz"]) - timedelta(days=1)).isoformat()
             brief = _latest_fresh_brief(uid, min_day)
             if not brief:
                 continue
@@ -93,4 +93,4 @@ def send_due_briefs(now_utc: datetime | None = None) -> dict:
         except Exception:  # pragma: no cover - one user must not break the sweep
             traceback.print_exc()
 
-    return {"considered": considered, "sent": sent, "min_day": min_day}
+    return {"considered": considered, "sent": sent}

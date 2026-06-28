@@ -76,7 +76,8 @@ def rebuild_user(user_id: UUID) -> dict:
             traceback.print_exc()
 
     try:
-        maint = graph_maintenance.run(user_id)
+        from .notifications_prefs import get_user_tz
+        maint = graph_maintenance.run(user_id, get_user_tz(user_id))
         print(f"[rebuild] user={uid} maintenance: {maint}")
     except Exception:
         print(f"[rebuild] user={uid} maintenance failed")

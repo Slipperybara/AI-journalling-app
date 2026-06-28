@@ -1,10 +1,11 @@
-"""APScheduler lifecycle for the daily batch parse.
+"""APScheduler lifecycle for the rolling batch parse.
 
 Gated behind `settings.run_inline_scheduler` (Phase 4). When true (local dev
-default), APScheduler runs in-process: a 06:00 local cron + a startup
-catch-up sweep. When false (Render production), neither fires — the batch
-is driven externally by a GitHub Actions cron hitting
-`POST /api/admin/run-batch`.
+default), APScheduler runs in-process: an HOURLY cron + a startup catch-up
+sweep. The batch is timezone-aware — each user's brief is generated when their
+local morning arrives, so it must tick every hour to catch all timezones. When
+false (Render production), neither fires — the batch is driven externally by a
+GitHub Actions cron hitting `POST /api/admin/run-batch`.
 """
 import threading
 
@@ -30,8 +31,8 @@ def start() -> None:
         return
     _scheduler.add_job(
         run_scheduled_batch,
-        CronTrigger(hour=settings.day_boundary_hour, minute=0),
-        id="daily_batch_parse",
+        CronTrigger(minute=0),  # hourly — rolling, timezone-aware generation
+        id="rolling_batch_parse",
         replace_existing=True,
     )
     _scheduler.start()

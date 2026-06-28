@@ -20,7 +20,7 @@ System-prompt priorities (in order when they conflict):
 """
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -173,15 +173,19 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
     # Lazy import: morning_brief imports store_assistant_message from this
     # module, so a top-level import here would be circular.
     from .morning_brief import get_daily_summaries
+    from .notifications_prefs import get_user_tz
     from .profile import format_about_user, get_profile
 
-    now = now or datetime.now()
-    today = bucket_for(now)
+    # Bucket the bot's memory in the user's local day so "today" / "recent days"
+    # line up with the locally-bucketed briefs and extraction rows.
+    tz = get_user_tz(user_id)
+    now = now or datetime.now(timezone.utc)
+    today = bucket_for(now, tz)
     today_iso = today.isoformat()
 
     today_transcript = [
         {"at": r["created_at"], "role": r["role"], "content": r["content"]}
-        for r in get_messages_for_day(today_iso, user_id)
+        for r in get_messages_for_day(today_iso, user_id, tz=tz)
     ]
 
     # Previous 2 days of full conversation, ordered oldest → newest so the
@@ -191,7 +195,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
         day_iso = (today - timedelta(days=back)).isoformat()
         msgs = [
             {"role": r["role"], "content": r["content"]}
-            for r in get_messages_for_day(day_iso, user_id)
+            for r in get_messages_for_day(day_iso, user_id, tz=tz)
         ]
         if msgs:
             recent_transcripts.append({"day": day_iso, "messages": msgs})

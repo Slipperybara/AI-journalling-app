@@ -9,10 +9,12 @@ export type NotificationPrefs = {
   tz: string;
 };
 
-// Earliest selectable time — mirrors the backend floor (the 06:00 UTC batch
-// must have generated the brief before we can push it).
+// Earliest selectable time, in the user's LOCAL clock — mirrors the backend
+// floor (app/notifications_prefs.py). Yesterday's recap only exists after the
+// 06:00 local day boundary, and the rolling batch generates it at the top of
+// that hour; 06:30 leaves the generation tick a margin before delivery.
 export const MIN_HOUR = 6;
-export const MIN_MINUTE = 15;
+export const MIN_MINUTE = 30;
 
 export function deviceTimezone(): string {
   try {

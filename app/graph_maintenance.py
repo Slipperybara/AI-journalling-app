@@ -11,13 +11,14 @@ from .core import client
 from .graph_db import graph_connect
 
 
-def run(user_id: UUID) -> dict:
+def run(user_id: UUID, tz: str | None = None) -> dict:
     """Run all maintenance passes for one user. Safe to call multiple times.
 
     Reconciliation runs BEFORE Levenshtein dedup so the latter operates on
-    a graph that already matches the Postgres source of truth.
+    a graph that already matches the Postgres source of truth. `tz` selects the
+    user's local day-bucket when reconciling message-days against parse_log.
     """
-    days_reconciled = reconcile_extractions_and_chain(user_id)
+    days_reconciled = reconcile_extractions_and_chain(user_id, tz)
     goals_reconciled = reconcile_goals(user_id)
     events_merged = _deduplicate_events(user_id)
     topics_merged = _deduplicate_and_categorise_topics(user_id)
@@ -31,15 +32,17 @@ def run(user_id: UUID) -> dict:
     }
 
 
-def reconcile_extractions_and_chain(user_id: UUID) -> dict:
+def reconcile_extractions_and_chain(user_id: UUID, tz: str | None = None) -> dict:
     """Project Postgres per-day state into Neo4j and ensure the Day chain
-    for this user."""
+    for this user. `tz` must match the bucketing used by parse_day so the
+    message-day set lines up with parse_log day keys."""
     from . import graph_batch
     from .db import connect
-    from .time_buckets import bucket_sql_expr
+    from .time_buckets import bucket_sql_expr, bucket_sql_expr_tz
 
     uid = str(user_id)
-    bucket_expr = bucket_sql_expr("m.created_at")
+    bucket_expr = bucket_sql_expr_tz("m.created_at") if tz else bucket_sql_expr("m.created_at")
+    msg_params = ([tz, uid] if tz else [uid])
     with connect() as conn:
         sqlite_days = {
             r["day"] for r in conn.execute(
@@ -51,7 +54,7 @@ def reconcile_extractions_and_chain(user_id: UUID) -> dict:
             for r in conn.execute(
                 f"SELECT DISTINCT {bucket_expr}::text AS day "
                 "FROM messages m WHERE m.user_id = %s AND m.role = 'user'",
-                (uid,),
+                msg_params,
             ).fetchall()
         }
         succeeded_days = {

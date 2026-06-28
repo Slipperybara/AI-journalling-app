@@ -70,6 +70,6 @@ def test_disabled_user_is_skipped(monkeypatch):
 
 
 def test_time_floor_is_enforced():
-    # 5:00 AM is before the 06:15 floor → clamped up.
+    # 5:00 AM is before the 06:30 local floor → clamped up.
     p = upsert_prefs(TEST_USER_ID, enabled=True, hour=5, minute=0, tz="UTC")
-    assert (p["hour"], p["minute"]) == (6, 15)
+    assert (p["hour"], p["minute"]) == (6, 30)

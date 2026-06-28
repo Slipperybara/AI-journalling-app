@@ -6,7 +6,9 @@ from pydantic import BaseModel
 
 from .. import analytics
 from ..auth import get_current_user_id
+from ..bot import store_assistant_message
 from ..db import connect
+from ..intro_greeting import generate_intro_greeting
 
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -28,6 +30,38 @@ async def create_conversation(user_id: UUID = Depends(get_current_user_id)):
         conv_id = cursor.fetchone()["id"]
     analytics.capture(user_id, "conversation_created", {"conversation_id": conv_id})
     return {"id": conv_id, "started_at": started_at}
+
+
+@router.post("/welcome")
+async def welcome_conversation(user_id: UUID = Depends(get_current_user_id)):
+    """Idempotently seed a brand-new user's first conversation with a warm,
+    personalized greeting grounded in their onboarding profile. If the user
+    already has any conversation, this is a no-op that returns the most recent one
+    (so it can't double-greet). Called once by the client after the onboarding
+    profile has synced."""
+    with connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM conversations WHERE user_id = %s AND archived = FALSE "
+            "ORDER BY started_at DESC LIMIT 1",
+            (str(user_id),),
+        )
+        existing = cursor.fetchone()
+    if existing is not None:
+        return {"id": existing["id"], "created": False}
+
+    greeting = generate_intro_greeting(user_id)
+    started_at = datetime.now().isoformat()
+    with connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO conversations (user_id, started_at) VALUES (%s, %s) RETURNING id",
+            (str(user_id), started_at),
+        )
+        conv_id = cursor.fetchone()["id"]
+    store_assistant_message(conv_id, greeting, user_id)
+    analytics.capture(user_id, "welcome_greeting_posted", {"conversation_id": conv_id})
+    return {"id": conv_id, "created": True}
 
 
 @router.get("")

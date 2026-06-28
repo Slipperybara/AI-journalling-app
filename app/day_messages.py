@@ -8,13 +8,14 @@ from typing import List
 from uuid import UUID
 
 from .db import connect
-from .time_buckets import bucket_sql_expr
+from .time_buckets import bucket_sql_expr, bucket_sql_expr_tz
 
 
 def get_messages_for_day(
     day: str,
     user_id: UUID,
     roles: tuple[str, ...] | None = None,
+    tz: str | None = None,
 ) -> List[dict]:
     """Return messages whose created_at falls in the 6 AM-6 AM bucket for `day`,
     for the given user.
@@ -25,19 +26,25 @@ def get_messages_for_day(
     user_id: scope every read by this UUID.
     roles:   If None, return all roles (user + assistant). Pass e.g. ('user',)
              to filter.
+    tz:      IANA timezone. When given, the bucket is the user's LOCAL day; when
+             None, the legacy server (UTC) bucket.
 
     Returns dicts with keys: id, conversation_id, role, content, created_at.
     Ordered by created_at ASC, id ASC (stable within the same second).
     """
-    bucket_expr = bucket_sql_expr("m.created_at")
+    bucket_expr = bucket_sql_expr_tz("m.created_at") if tz else bucket_sql_expr("m.created_at")
 
+    # Param order MUST match the SQL text: user_id, [tz inside bucket_expr], day, [roles].
+    params: list = [str(user_id)]
+    if tz:
+        params.append(tz)
+    params.append(day)
     if roles is None:
         role_filter = ""
-        params: list = [str(user_id), day]
     else:
         placeholders = ",".join(["%s"] * len(roles))
         role_filter = f"AND m.role IN ({placeholders})"
-        params = [str(user_id), day, *roles]
+        params.extend(roles)
 
     with connect() as conn:
         cursor = conn.cursor()
@@ -52,10 +59,16 @@ def get_messages_for_day(
         return [dict(r) for r in cursor.fetchall()]
 
 
-def get_days_with_messages(user_id: UUID) -> List[dict]:
+def get_days_with_messages(user_id: UUID, tz: str | None = None) -> List[dict]:
     """Return every day-bucket that has at least one user message for this
-    user, newest first. Used by the inspector day-picker and backfill logic."""
-    bucket_expr = bucket_sql_expr("m.created_at")
+    user, newest first. Used by the inspector day-picker and backfill logic.
+    `tz` selects local vs legacy (UTC) bucketing."""
+    bucket_expr = bucket_sql_expr_tz("m.created_at") if tz else bucket_sql_expr("m.created_at")
+    # Param order: [tz inside bucket_expr], user_id.
+    params: list = []
+    if tz:
+        params.append(tz)
+    params.append(str(user_id))
     with connect() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -64,7 +77,7 @@ def get_days_with_messages(user_id: UUID) -> List[dict]:
             WHERE m.user_id = %s AND m.role = 'user'
             GROUP BY day
             ORDER BY day DESC
-        """, (str(user_id),))
+        """, params)
         return [dict(r) for r in cursor.fetchall()]
 
 

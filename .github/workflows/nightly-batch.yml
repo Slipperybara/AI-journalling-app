@@ -1,8 +1,10 @@
-name: Nightly batch
+name: Rolling batch
 
-# Fires at 06:00 UTC every day. Hits the Render-hosted backend's
-# HMAC-protected batch webhook, which then iterates every user and runs
-# the per-user pipeline (parse yesterday → graph → maintenance → brief).
+# Fires hourly. Hits the Render-hosted backend's HMAC-protected batch webhook,
+# which iterates every user and runs the timezone-aware per-user pipeline: a
+# user's brief is generated when THEIR local morning arrives (parse local
+# yesterday → graph → maintenance → brief). Hourly ticks outside a user's local
+# morning are cheap no-ops (idempotent via parse_log / morning_brief_log).
 #
 # Required repo secrets:
 #   RENDER_URL            — https://<your-service>.onrender.com
@@ -11,7 +13,7 @@ name: Nightly batch
 # Manual runs are also allowed via the Actions UI (workflow_dispatch).
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:

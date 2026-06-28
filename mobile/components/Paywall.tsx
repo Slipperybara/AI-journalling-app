@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PurchasesPackage } from 'react-native-purchases';
 
+import { track } from '../lib/analytics';
 import {
   addEntitlementListener,
   getOffering,
@@ -152,10 +153,16 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
       const annual = pkgs.find(isAnnual);
       setSelectedId((annual ?? pkgs[0])?.identifier ?? null);
       setLoaded(true);
+      track('paywall_viewed', { has_packages: pkgs.length > 0, package_count: pkgs.length });
       const ids = pkgs.map((p) => p.product.identifier);
       if (ids.length) getTrialEligibility(ids).then(setEligible);
     });
   }, []);
+
+  const selectPlan = (pkg: PurchasesPackage) => {
+    setSelectedId(pkg.identifier);
+    track('paywall_plan_selected', { plan: pkg.packageType, identifier: pkg.identifier });
+  };
 
   const monthly = packages.find((p) => p.packageType === 'MONTHLY');
   const annual = packages.find(isAnnual);
@@ -166,20 +173,33 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
 
   const subscribe = async () => {
     if (!selected) return;
+    const ctx = {
+      plan: selected.packageType,
+      identifier: selected.identifier,
+      is_trial: Boolean(selectedIntro && selectedIntro.price === 0),
+      cta: ctaLabel,
+    };
+    track('paywall_subscribe_clicked', ctx);
     setBusy(true);
     const res = await purchasePackage(selected);
     setBusy(false);
     if (res.ok) {
+      track('paywall_purchase_succeeded', ctx);
       onPurchased();
-    } else if (!res.userCancelled && res.message) {
-      Alert.alert('Just a moment', res.message);
+    } else if (res.userCancelled) {
+      track('paywall_purchase_cancelled', ctx);
+    } else {
+      track('paywall_purchase_failed', { ...ctx, message: res.message ?? '' });
+      if (res.message) Alert.alert('Just a moment', res.message);
     }
   };
 
   const restore = async () => {
+    track('paywall_restore_clicked');
     setBusy(true);
     const ok = await restorePurchases();
     setBusy(false);
+    track('paywall_restore_result', { restored: ok });
     if (ok) onPurchased();
   };
 
@@ -213,7 +233,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
                 <PlanCard
                   pkg={annual}
                   selected={selectedId === annual.identifier}
-                  onPress={() => setSelectedId(annual.identifier)}
+                  onPress={() => selectPlan(annual)}
                   badge={save ? `Save ${save}%` : 'Best value'}
                   trialLabel={freeTrialLabel(annual, eligible)}
                 />
@@ -222,7 +242,7 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
                 <PlanCard
                   pkg={monthly}
                   selected={selectedId === monthly.identifier}
-                  onPress={() => setSelectedId(monthly.identifier)}
+                  onPress={() => selectPlan(monthly)}
                   trialLabel={freeTrialLabel(monthly, eligible)}
                 />
               ) : null}
@@ -261,7 +281,14 @@ export function Paywall({ onPurchased }: { onPurchased: () => void }) {
           </Pressable>
 
           {loaded && packages.length === 0 ? (
-            <Pressable onPress={onPurchased} hitSlop={8} className="mt-3 items-center">
+            <Pressable
+              onPress={() => {
+                track('paywall_dismissed', { reason: 'no_packages' });
+                onPurchased();
+              }}
+              hitSlop={8}
+              className="mt-3 items-center"
+            >
               <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: '#B7B4AD' }}>Not now</Text>
             </Pressable>
           ) : null}
