@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { PanResponder, Platform, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { listConversations } from '../lib/chat';
+import { getOrCreateWelcome, listConversations } from '../lib/chat';
 import { syncNotificationPrefs } from '../lib/notificationPrefs';
 import { registerForPushNotifications } from '../lib/notifications';
 import { syncOnboardingProfile } from '../lib/profile';
@@ -26,24 +26,42 @@ export function MainScreen() {
   const [bgMode, setBgMode] = useState<'warm' | 'cool'>('warm');
   const insets = useSafeAreaInsets();
 
+  // Rightward swipe across the content opens the drawer (only claims a clearly
+  // horizontal drag, so vertical scrolls and taps pass through untouched).
+  const openPan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => g.dx > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderRelease: (_e, g) => {
+        if (g.dx > 45) setDrawerOpen(true);
+      },
+    }),
+  ).current;
+
   const today = new Date()
     .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
     .toUpperCase();
 
-  // Boot: open the most recent conversation (mirrors the web app). If there are
-  // none, convId stays null and a conversation is created lazily on first send.
+  // Boot: open the most recent conversation (mirrors the web app). For a brand-new
+  // user with no conversations, seed a personalized greeting as their first message
+  // (profile must sync FIRST so the greeting can reference their onboarding answers).
   useEffect(() => {
     (async () => {
+      // One-time: push onboarding answers to the backend so the welcome greeting
+      // and the bot's first replies already know the user. Best-effort, idempotent.
+      // Awaited so the greeting below is generated with the profile already present.
+      await syncOnboardingProfile();
       const convs = await listConversations();
-      if (convs.length) setConvId(convs[0].id);
+      if (convs.length) {
+        setConvId(convs[0].id);
+      } else {
+        const welcomeId = await getOrCreateWelcome();
+        if (welcomeId) setConvId(welcomeId);
+      }
       setBooting(false);
     })();
     // Register for push (morning-brief notifications). No-op on simulator /
     // when denied; only effective in a real build with push entitlements.
     registerForPushNotifications();
-    // One-time: push onboarding answers to the backend so the bot's first
-    // replies already know the user. Best-effort, idempotent.
-    syncOnboardingProfile();
     // Sync the morning-notification time chosen during onboarding (PUT needs
     // auth, which we now have). Idempotent; the drawer setting keeps it current.
     syncNotificationPrefs();
@@ -62,7 +80,7 @@ export function MainScreen() {
         keyboardVerticalOffset={insets.bottom}
         className="flex-1"
       >
-        <View className="flex-1">
+        <View className="flex-1" {...openPan.panHandlers}>
           {view === 'chat' ? (
             <ChatScreen
               convId={convId}

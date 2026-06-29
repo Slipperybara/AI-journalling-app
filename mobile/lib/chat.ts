@@ -30,6 +30,20 @@ export async function createConversation(): Promise<number> {
   return c.id;
 }
 
+// Seed (or fetch) a brand-new user's first conversation with a personalized
+// greeting. Idempotent server-side: returns the existing conversation if the user
+// already has one. Returns null on failure so boot can fall back to an empty chat.
+export async function getOrCreateWelcome(): Promise<number | null> {
+  try {
+    const r = await apiFetch('/api/conversations/welcome', { method: 'POST' });
+    if (!r.ok) return null;
+    const c = (await r.json()) as { id: number };
+    return c.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getMessages(convId: number): Promise<Message[]> {
   const r = await apiFetch(`/api/conversations/${convId}/messages`);
   if (!r.ok) return [];

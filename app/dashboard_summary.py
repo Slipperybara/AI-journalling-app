@@ -12,13 +12,13 @@ Scores mirror the frontend dashboard exactly so the prose matches the bars:
   - focus:     min(deep_work_hours / FOCUS_TARGET_HOURS, 1) * 100
 """
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 from .core import client
 from .db import connect
-from .time_buckets import current_bucket
+from .time_buckets import bucket_for, current_bucket
 
 # A focused, sustainable deep-work day. 4h maps to a full focus score of 100.
 FOCUS_TARGET_HOURS = 4.0
@@ -64,10 +64,12 @@ def _avg(vals: list[float]) -> Optional[float]:
     return round(sum(nums) / len(nums), 1) if nums else None
 
 
-def _gather(user_id: UUID) -> dict:
-    """Read the last 7 day-buckets and reduce to compact aggregates."""
+def _gather(user_id: UUID, tz: Optional[str] = None) -> dict:
+    """Read the last 7 day-buckets and reduce to compact aggregates. `tz` selects
+    the user's local 7-day window so it lines up with the local extraction keys."""
     uid = str(user_id)
-    seven_back = (current_bucket() - timedelta(days=7)).isoformat()
+    now = datetime.now(timezone.utc) if tz else datetime.now()
+    seven_back = (bucket_for(now, tz) - timedelta(days=7)).isoformat()
 
     with connect() as conn:
         emo = conn.execute(
@@ -145,10 +147,11 @@ def _store(user_id: UUID, summary: str) -> None:
         )
 
 
-def refresh_dashboard_summary(user_id: UUID) -> dict:
+def refresh_dashboard_summary(user_id: UUID, tz: Optional[str] = None) -> dict:
     """Recompute and store this user's 7-day dashboard summary. Idempotent.
-    Returns {status, summary}. Used by the nightly batch / catch-up."""
-    agg = _gather(user_id)
+    Returns {status, summary}. Used by the nightly batch / catch-up. `tz` selects
+    the user's local 7-day window."""
+    agg = _gather(user_id, tz)
     has_data = agg["days_with_emotion"] or agg["days_with_health"] or agg["days_with_focus"]
     if not has_data:
         summary = (

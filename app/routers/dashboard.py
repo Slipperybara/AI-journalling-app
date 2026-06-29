@@ -10,11 +10,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
+from datetime import datetime, timezone
+
 from .. import analytics
 from ..auth import get_current_user_id
 from ..dashboard_summary import get_dashboard_summary
 from ..db import connect
-from ..time_buckets import bucket_sql_expr, current_bucket
+from ..notifications_prefs import get_user_tz
+from ..time_buckets import bucket_for, bucket_sql_expr_tz
 
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -23,8 +26,11 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 @router.get("")
 async def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
     uid = str(user_id)
-    seven_back = (current_bucket() - timedelta(days=7)).isoformat()
-    today_iso = current_bucket().isoformat()
+    tz = get_user_tz(user_id)
+    now = datetime.now(timezone.utc)
+    today_bucket = bucket_for(now, tz)
+    seven_back = (today_bucket - timedelta(days=7)).isoformat()
+    today_iso = today_bucket.isoformat()
 
     with connect() as conn:
         cursor = conn.cursor()
@@ -100,18 +106,22 @@ async def get_dashboard(user_id: UUID = Depends(get_current_user_id)):
         parse_log = [dict(r) for r in cursor.fetchall()]
 
         # Which day-buckets in the last 7 days have at least one user message —
-        # powers the binary journaling tracker.
-        bucket_expr = bucket_sql_expr("m.created_at")
+        # powers the binary journaling tracker. Bucketed in the user's local tz,
+        # so it lines up with the local extraction-row day keys. The bucket is
+        # computed once in a subquery so the tz param appears a single time.
+        bucket_expr = bucket_sql_expr_tz("m.created_at")
         cursor.execute(f"""
-            SELECT {bucket_expr}::text AS day
-            FROM messages m
-            WHERE m.user_id = %s AND m.role = 'user' AND {bucket_expr} >= %s
+            SELECT day FROM (
+                SELECT {bucket_expr}::text AS day
+                FROM messages m
+                WHERE m.user_id = %s AND m.role = 'user'
+            ) t
+            WHERE day >= %s
             GROUP BY day
-        """, (uid, seven_back))
+        """, (tz, uid, seven_back))
         journaled_days = {r["day"] for r in cursor.fetchall()}
 
     # Last 7 day-buckets, oldest → newest, each flagged journaled or not.
-    today_bucket = current_bucket()
     journaling_week = []
     for i in range(6, -1, -1):
         d = (today_bucket - timedelta(days=i)).isoformat()

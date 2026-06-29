@@ -16,10 +16,24 @@ from tests.conftest import TEST_USER_ID, TEST_USER_ID_B
 SECRET = "test-batch-webhook-secret"
 
 
+def _full_pipeline_result(uid):
+    """What process_user_due returns when a user's local morning has arrived and
+    every stage runs."""
+    return {
+        "tz": "UTC",
+        "parse": {"status": "succeeded"},
+        "graph": {"status": "ok"},
+        "maintenance": {"events_merged": 0},
+        "morning_brief": {"status": "posted", "conversation_id": 42},
+        "dashboard_summary": {"status": "refreshed", "summary": "stub summary"},
+    }
+
+
 @pytest.fixture
 def webhook_enabled(monkeypatch):
-    """Pin BATCH_WEBHOOK_SECRET and replace every pipeline call with a stub
-    so the test is hermetic — no real OpenAI / Neo4j / Postgres mutation."""
+    """Pin BATCH_WEBHOOK_SECRET and stub the per-user pipeline so the test is
+    hermetic — no real OpenAI / Neo4j / Postgres mutation. The webhook now
+    delegates each user to batch.process_user_due (timezone-aware due-check)."""
     prev = settings.batch_webhook_secret
     settings.batch_webhook_secret = SECRET
 
@@ -27,16 +41,8 @@ def webhook_enabled(monkeypatch):
         return [TEST_USER_ID, TEST_USER_ID_B]
 
     monkeypatch.setattr(admin_router, "get_all_user_ids_with_messages", fake_get_user_ids)
-    monkeypatch.setattr(admin_router, "parse_day",
-                        lambda day, uid: {"status": "succeeded", "day": day, "user_id": str(uid), "messages": 3})
-    monkeypatch.setattr(admin_router.graph_batch, "write_day",
-                        lambda day, uid: {"status": "ok", "day": day, "user_id": str(uid), "events": 1})
-    monkeypatch.setattr(admin_router.graph_maintenance, "run",
-                        lambda uid: {"events_merged": 0, "topics_merged": 0, "goals_merged": 0})
-    monkeypatch.setattr(admin_router.morning_brief, "post_morning_brief",
-                        lambda day, uid: {"status": "posted", "day": day, "conversation_id": 42})
-    monkeypatch.setattr(admin_router.dashboard_summary, "refresh_dashboard_summary",
-                        lambda uid: {"status": "refreshed", "summary": "stub summary"})
+    monkeypatch.setattr(admin_router, "process_user_due",
+                        lambda uid, now_utc: _full_pipeline_result(uid))
 
     yield
     settings.batch_webhook_secret = prev
@@ -93,19 +99,19 @@ def test_200_with_no_users(webhook_enabled, monkeypatch):
 
 
 def test_per_user_pipeline_failure_does_not_break_others(webhook_enabled, monkeypatch):
-    """If parse_day raises for one user, the response still summarizes that
+    """If process_user_due raises for one user, the webhook still summarizes that
     user with status=failed and the OTHER users are processed normally."""
-    def parse_day_one_explodes(day, uid):
+    def one_explodes(uid, now_utc):
         if uid == TEST_USER_ID:
             raise RuntimeError("boom")
-        return {"status": "succeeded", "day": day, "user_id": str(uid), "messages": 1}
+        return _full_pipeline_result(uid)
 
-    monkeypatch.setattr(admin_router, "parse_day", parse_day_one_explodes)
+    monkeypatch.setattr(admin_router, "process_user_due", one_explodes)
 
     with TestClient(app) as client:
         r = client.post("/api/admin/run-batch", headers={"X-Webhook-Secret": SECRET})
     assert r.status_code == 200
     results = r.json()["results"]
-    assert results[str(TEST_USER_ID)]["parse"]["status"] == "failed"
-    assert "boom" in results[str(TEST_USER_ID)]["parse"]["error"]
+    assert results[str(TEST_USER_ID)]["status"] == "failed"
+    assert "boom" in results[str(TEST_USER_ID)]["error"]
     assert results[str(TEST_USER_ID_B)]["parse"]["status"] == "succeeded"

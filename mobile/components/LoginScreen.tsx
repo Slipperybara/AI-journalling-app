@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, Text, TextInput, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as AppleAuthentication from 'expo-apple-authentication';
 
@@ -51,7 +52,16 @@ export function LoginScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-paper">
-      <View className="flex-1 items-center justify-center px-8">
+      {/* Keyboard-aware so the email/password fields (and Sign in button) lift
+          above the keyboard instead of being hidden by it. flexGrow + center
+          keeps everything vertically centered while the keyboard is closed;
+          extraKeyboardSpace gives a little breathing room above the keys. */}
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
+        showsVerticalScrollIndicator={false}
+      >
         <View className="mb-12 items-center">
           <Mascot mood="happy" size={128} style={{ marginBottom: 8 }} />
           <Text className="text-4xl font-semibold text-ink">JAI</Text>
@@ -155,7 +165,7 @@ export function LoginScreen() {
             </Text>
           </Pressable>
         </View>
-      </View>
+      </KeyboardAwareScrollView>
     </SafeAreaView>
   );
 }

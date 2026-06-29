@@ -279,7 +279,7 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are MindForge writing the user's morning message — the first "
+                    "You are JAI writing the user's morning message — the first "
                     "thing they see when they open the app today. Its heart is a warm, "
                     "empathetic recap of yesterday: you remember what they went through "
                     "and how they seemed to feel, and you reflect it back so they feel "
@@ -317,7 +317,7 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
 
 def _generate_welcome_for_new_user() -> str:
     return (
-        "Good morning. I'm MindForge — your space to talk through your day, "
+        "Good morning. I'm JAI — your space to talk through your day, "
         "track your goals, and notice the patterns that shape how you feel "
         "and work. There's no data to look back on yet, which means we get "
         "to start fresh together. How are you feeling today?"

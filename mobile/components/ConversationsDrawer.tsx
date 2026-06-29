@@ -1,5 +1,6 @@
+import { Feather } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Dimensions, FlatList, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { deleteConversation, listConversations, renameConversation, type Conversation } from '../lib/chat';
@@ -58,6 +59,19 @@ export function ConversationsDrawer({
   const [mounted, setMounted] = useState(open);
   const tx = useRef(new Animated.Value(-DRAWER_W)).current;
   const fade = useRef(new Animated.Value(0)).current;
+
+  // Leftward swipe on the open panel closes it (latest onClose via ref so the
+  // once-created responder never goes stale).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const closePan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => g.dx < -12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+      onPanResponderRelease: (_e, g) => {
+        if (g.dx < -45) onCloseRef.current();
+      },
+    }),
+  ).current;
 
   useEffect(() => {
     if (open) {
@@ -127,6 +141,7 @@ export function ConversationsDrawer({
       </Animated.View>
 
       <Animated.View
+        {...closePan.panHandlers}
         style={{
           position: 'absolute',
           top: 0,
@@ -142,9 +157,10 @@ export function ConversationsDrawer({
         <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1 }}>
           <Pressable
             onPress={onOpenDashboard}
-            style={{ paddingHorizontal: 18, paddingTop: 10, paddingVertical: 12 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingTop: 10, paddingVertical: 12 }}
             android_ripple={{ color: colors.line }}
           >
+            <Feather name="grid" size={18} color={view === 'dashboard' ? colors.ink : colors.inkSoft} />
             <Text
               style={{
                 fontFamily: fonts.serifMedium,
@@ -152,16 +168,17 @@ export function ConversationsDrawer({
                 color: view === 'dashboard' ? colors.ink : colors.inkSoft,
               }}
             >
-              ◇  Dashboard
+              Dashboard
             </Text>
           </Pressable>
 
           <Pressable
             onPress={onNew}
-            style={{ paddingHorizontal: 18, paddingVertical: 12 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 12 }}
             android_ripple={{ color: colors.line }}
           >
-            <Text style={{ fontFamily: fonts.serifMedium, fontSize: 18, color: colors.inkSoft }}>＋  New chat</Text>
+            <Feather name="edit" size={18} color={colors.inkSoft} />
+            <Text style={{ fontFamily: fonts.serifMedium, fontSize: 18, color: colors.inkSoft }}>New chat</Text>
           </Pressable>
 
           <View style={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 4 }}>
@@ -224,11 +241,12 @@ export function ConversationsDrawer({
 
           <Pressable
             onPress={() => setNotifOpen(true)}
-            style={{ paddingHorizontal: 18, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.line }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.line }}
             android_ripple={{ color: colors.line }}
           >
+            <Feather name="clock" size={16} color={colors.mutedSoft} />
             <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>
-              ⏰  Morning reflection
+              Morning reflection
             </Text>
           </Pressable>
 
@@ -243,18 +261,20 @@ export function ConversationsDrawer({
                 [{ text: 'Close', style: 'cancel' }],
               )
             }
-            style={{ paddingHorizontal: 18, paddingVertical: 14 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 14 }}
             android_ripple={{ color: colors.line }}
           >
-            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>♡  Safety &amp; support</Text>
+            <Feather name="life-buoy" size={16} color={colors.mutedSoft} />
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>Safety &amp; support</Text>
           </Pressable>
 
           <Pressable
             onPress={() => setAccountOpen(true)}
-            style={{ paddingHorizontal: 18, paddingVertical: 14 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 14 }}
             android_ripple={{ color: colors.line }}
           >
-            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>☺  Account</Text>
+            <Feather name="user" size={16} color={colors.mutedSoft} />
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.mutedSoft }}>Account</Text>
           </Pressable>
         </SafeAreaView>
 

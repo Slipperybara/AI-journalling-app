@@ -1,4 +1,4 @@
-"""MindForge AI — FastAPI entrypoint."""
+"""JAI — FastAPI entrypoint."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,7 +12,7 @@ from app.routers import (
 )
 
 
-app = FastAPI(title="MindForge AI")
+app = FastAPI(title="JAI")
 
 _cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
@@ -25,7 +25,14 @@ app.add_middleware(
 )
 
 init_db()
-init_graph()
+# Graph init is best-effort: if Neo4j is unreachable (e.g. staging without a
+# graph instance), the app must still boot. The live journaling path doesn't
+# touch Neo4j; only the analytical GraphRAG path does, and it degrades to a
+# graceful apology when the graph is down.
+try:
+    init_graph()
+except Exception as exc:  # pragma: no cover - depends on external service
+    print(f"[startup] init_graph failed ({exc}); continuing without graph — analytical path degraded")
 
 app.include_router(conversations.router)
 app.include_router(messages.router)

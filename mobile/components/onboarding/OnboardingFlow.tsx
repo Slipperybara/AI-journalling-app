@@ -9,7 +9,6 @@ import { fonts } from '../../lib/theme';
 import { Mascot, type MascotMood } from '../Mascot';
 import { TimePicker } from '../TimePicker';
 import { ChoiceGroup } from './ChoiceGroup';
-import { HoldToCommit } from './HoldToCommit';
 import { OnboardingScaffold } from './OnboardingScaffold';
 
 const AGE = ['Under 18', '18–24', '25–34', '35–44', '45–54', '55+'];
@@ -40,8 +39,8 @@ const STEPS = [
   'welcome',
   'name', 'age', 'gender', 'occupation',
   'emotional', 'familiarity', 'issues',
-  'tailored', 'heard', 'stat', 'effortless', 'reread', 'reflection',
-  'commit', 'notifications',
+  'tailored', 'effortless', 'reflection',
+  'notifications',
 ] as const;
 
 // Keyword highlighting: wrap a phrase in ==double-equals== and it renders with a
@@ -140,7 +139,10 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   }
 
   const back = step > 0 ? () => setStep((s) => Math.max(0, s - 1)) : undefined;
-  const next = () => setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  const next = () => {
+    track('onboarding_next_clicked', { step, key });
+    setStep((s) => Math.min(STEPS.length - 1, s + 1));
+  };
 
   const finish = async () => {
     await saveAnswers(answers);
@@ -150,6 +152,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   };
 
   const enableNotifications = async () => {
+    track('onboarding_next_clicked', { step, key, choice: 'enable_notifications' });
     await registerForPushNotifications();
     // Stash the chosen time locally; it's PUT to the backend after login
     // (onboarding runs unauthenticated).
@@ -159,6 +162,7 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
   };
 
   const skipNotifications = async () => {
+    track('onboarding_next_clicked', { step, key, choice: 'skip_notifications' });
     await saveLocalNotifyChoice({ enabled: false, hour: notifyHour, minute: notifyMinute });
     finish();
   };
@@ -286,41 +290,8 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
       break;
     }
 
-    case 'heard':
-      content = (
-        <StoryView
-          mood="happy"
-          title="Sometimes you just need to feel heard."
-          body="JAI listens like it has all the time in the world — and answers with real warmth, the moment you need it. ==Not tomorrow. Right now.=="
-        />
-      );
-      footer = <PrimaryButton label="Continue" onPress={next} />;
-      break;
-
     case 'tailored':
       content = <StoryView mood="sad" title={tailored.title} body={tailored.body} />;
-      footer = <PrimaryButton label="Continue" onPress={next} />;
-      break;
-
-    case 'stat':
-      content = (
-        <StoryView
-          mood="thinkSad"
-          title="But journaling is hard to keep up."
-          body="Even knowing it helps, around ==70% of people== drift away — blank pages, no time, and doing it all alone."
-        />
-      );
-      footer = <PrimaryButton label="Continue" onPress={next} />;
-      break;
-
-    case 'reread':
-      content = (
-        <StoryView
-          mood="thinkExcited"
-          title="But the real magic is looking back."
-          body="==Yesterday always has something to teach== — most of us just never go back to listen."
-        />
-      );
       footer = <PrimaryButton label="Continue" onPress={next} />;
       break;
 
@@ -344,27 +315,6 @@ export function OnboardingFlow({ onDone }: { onDone: () => void }) {
         />
       );
       footer = <PrimaryButton label="Continue" onPress={next} />;
-      break;
-
-    case 'commit':
-      content = (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <Text
-            style={{ fontFamily: fonts.serifMedium, fontSize: 30, lineHeight: 39, color: '#2A2825', textAlign: 'center' }}
-          >
-            Do you want to transform your life?
-          </Text>
-          <Text
-            style={{ fontFamily: fonts.serif, fontSize: 18, lineHeight: 28, color: '#6E6B64', marginTop: 16, textAlign: 'center' }}
-          >
-            It starts with a small, daily promise to yourself.
-          </Text>
-          <View style={{ marginTop: 52 }}>
-            <HoldToCommit label="Hold to commit" onComplete={next} />
-          </View>
-        </View>
-      );
-      footer = null;
       break;
 
     case 'notifications':

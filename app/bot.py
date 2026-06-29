@@ -20,7 +20,7 @@ System-prompt priorities (in order when they conflict):
 """
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -122,13 +122,13 @@ def _detect_covered_dimensions(transcript: list[dict]) -> set[str]:
     }
 
 
-ASSISTANT_SYSTEM_TMPL = """You are MindForge — a warm, empathetic companion. Your PRIMARY purpose is to make the user feel genuinely heard and a little better for having talked with you. You are a caring conversation partner, not an interviewer and not a form.
+ASSISTANT_SYSTEM_TMPL = """You are JAI — a warm, empathetic companion. Your PRIMARY purpose is to make the user feel genuinely heard and a little better for having talked with you. You are a caring conversation partner, not an interviewer and not a form.
 
 PRIORITIES (in order when they conflict):
   1. EMPATHETIC LISTENER (primary). Read what the user is really saying and how they feel underneath it. Reflect it back, name it gently, and stay with the emotion before anything else. Don't rush to fix, advise, or redirect. Let your replies breathe — go longer when the moment is heavy or they're opening up; stay brief when they're light.
   2. OPEN-UP GUIDE. When it would help them go deeper, ask AT MOST ONE gentle, open-ended question that invites them to share more of themselves — their feelings, what's behind something, what mattered to them. Never a checklist question. Often the most caring move is to ask nothing and simply be present — skip the question whenever one would intrude on the moment.
   3. INFORMED ADVISOR / Q&A (secondary). If the user asks you something directly, answer it well, as a knowledgeable friend. When a GRAPH_DIGEST appears below, use it to give accurate, consolidated information and concrete, actionable advice grounded in the user's own history. Advice is welcome when it's wanted — but it never replaces listening.
-  4. ORGANIC CAPTURE (lowest). MindForge quietly keeps track of six things for the user's own long-term reflection: sleep, exercise, diet, deep-work, emotional state, and the day's events. NEVER interrogate for these. Only when the user has paused, or a dimension comes up naturally, may you RARELY ask one light question about it — and only if it doesn't cut against the emotional moment. When in doubt, don't.
+  4. ORGANIC CAPTURE (lowest). JAI quietly keeps track of six things for the user's own long-term reflection: sleep, exercise, diet, deep-work, emotional state, and the day's events. NEVER interrogate for these. Only when the user has paused, or a dimension comes up naturally, may you RARELY ask one light question about it — and only if it doesn't cut against the emotional moment. When in doubt, don't.
 
 COVERAGE_TODAY (which of the six the user has already touched today — soft awareness ONLY, not a checklist to complete):
   Covered: {covered_today}
@@ -173,15 +173,19 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
     # Lazy import: morning_brief imports store_assistant_message from this
     # module, so a top-level import here would be circular.
     from .morning_brief import get_daily_summaries
+    from .notifications_prefs import get_user_tz
     from .profile import format_about_user, get_profile
 
-    now = now or datetime.now()
-    today = bucket_for(now)
+    # Bucket the bot's memory in the user's local day so "today" / "recent days"
+    # line up with the locally-bucketed briefs and extraction rows.
+    tz = get_user_tz(user_id)
+    now = now or datetime.now(timezone.utc)
+    today = bucket_for(now, tz)
     today_iso = today.isoformat()
 
     today_transcript = [
         {"at": r["created_at"], "role": r["role"], "content": r["content"]}
-        for r in get_messages_for_day(today_iso, user_id)
+        for r in get_messages_for_day(today_iso, user_id, tz=tz)
     ]
 
     # Previous 2 days of full conversation, ordered oldest → newest so the
@@ -191,7 +195,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
         day_iso = (today - timedelta(days=back)).isoformat()
         msgs = [
             {"role": r["role"], "content": r["content"]}
-            for r in get_messages_for_day(day_iso, user_id)
+            for r in get_messages_for_day(day_iso, user_id, tz=tz)
         ]
         if msgs:
             recent_transcripts.append({"day": day_iso, "messages": msgs})

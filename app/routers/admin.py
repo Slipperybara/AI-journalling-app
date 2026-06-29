@@ -10,18 +10,18 @@ today's morning brief).
 """
 import hmac
 import traceback
-from datetime import timedelta
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from .. import analytics, dashboard_summary, graph_batch, graph_maintenance, morning_brief, notify_delivery
+from .. import analytics, morning_brief, notify_delivery
 from ..auth import get_current_user_id
-from ..batch import parse_day
+from ..batch import parse_day, process_user_due
 from ..core import settings
 from ..day_messages import get_all_user_ids_with_messages
-from ..time_buckets import current_bucket
+from ..notifications_prefs import get_user_tz
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -53,39 +53,18 @@ async def run_batch_webhook(
     ):
         raise HTTPException(status_code=401, detail="invalid webhook secret")
 
-    yesterday = (current_bucket() - timedelta(days=1)).isoformat()
-    today = current_bucket().isoformat()
+    # Hourly cron: for each user, run the timezone-aware due-check. A user's
+    # pipeline fires once their local morning arrives; other ticks no-op.
+    now_utc = datetime.now(timezone.utc)
     user_ids = get_all_user_ids_with_messages()
     results: dict[str, dict] = {}
 
     for uid in user_ids:
-        per_user: dict = {}
         try:
-            per_user["parse"] = parse_day(yesterday, uid)
+            results[str(uid)] = process_user_due(uid, now_utc)
         except Exception as exc:
             traceback.print_exc()
-            per_user["parse"] = {"status": "failed", "error": str(exc)}
-        try:
-            per_user["graph"] = graph_batch.write_day(yesterday, uid)
-        except Exception as exc:
-            traceback.print_exc()
-            per_user["graph"] = {"status": "failed", "error": str(exc)}
-        try:
-            per_user["maintenance"] = graph_maintenance.run(uid)
-        except Exception as exc:
-            traceback.print_exc()
-            per_user["maintenance"] = {"status": "failed", "error": str(exc)}
-        try:
-            per_user["morning_brief"] = morning_brief.post_morning_brief(today, uid)
-        except Exception as exc:
-            traceback.print_exc()
-            per_user["morning_brief"] = {"status": "failed", "error": str(exc)}
-        try:
-            per_user["dashboard_summary"] = dashboard_summary.refresh_dashboard_summary(uid)
-        except Exception as exc:
-            traceback.print_exc()
-            per_user["dashboard_summary"] = {"status": "failed", "error": str(exc)}
-        results[str(uid)] = per_user
+            results[str(uid)] = {"status": "failed", "error": str(exc)}
 
     parse_successes = sum(
         1 for r in results.values() if r.get("parse", {}).get("status") == "succeeded"
@@ -103,8 +82,7 @@ async def run_batch_webhook(
         },
     )
     return {
-        "yesterday": yesterday,
-        "today": today,
+        "ran_at": now_utc.isoformat(),
         "users_processed": len(user_ids),
         "results": results,
     }
@@ -132,9 +110,10 @@ async def send_due_notifications_webhook(
 @router.post("/parse-day/{day}")
 async def trigger_parse_day(day: str, user_id: UUID = Depends(get_current_user_id)):
     """Manually parse a single day-bucket for the current user. `day` is
-    'YYYY-MM-DD'. Idempotent — existing rows for the (user, day) are replaced."""
+    'YYYY-MM-DD'. Idempotent — existing rows for the (user, day) are replaced.
+    `day` is interpreted in the user's local timezone."""
     try:
-        return parse_day(day, user_id)
+        return parse_day(day, user_id, get_user_tz(user_id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Parse failed: {e}")
 

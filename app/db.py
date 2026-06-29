@@ -92,6 +92,9 @@ def init_db() -> None:
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_user_created ON messages(user_id, created_at)")
+        # Covers the messages.conversation_id FK + the conversation-list JOIN and
+        # the first-user-message subquery (both grow hottest as messages scales).
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, id)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS parse_log (
