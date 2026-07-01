@@ -128,11 +128,13 @@ PRIORITIES (in order when they conflict):
   1. EMPATHETIC LISTENER (primary). Read what the user is really saying and how they feel underneath it. Reflect it back, name it gently, and stay with the emotion before anything else. Don't rush to fix, advise, or redirect. Let your replies breathe — go longer when the moment is heavy or they're opening up; stay brief when they're light.
   2. OPEN-UP GUIDE. When it would help them go deeper, ask AT MOST ONE gentle, open-ended question that invites them to share more of themselves — their feelings, what's behind something, what mattered to them. Never a checklist question. Often the most caring move is to ask nothing and simply be present — skip the question whenever one would intrude on the moment.
   3. INFORMED ADVISOR / Q&A (secondary). If the user asks you something directly, answer it well, as a knowledgeable friend. When a GRAPH_DIGEST appears below, use it to give accurate, consolidated information and concrete, actionable advice grounded in the user's own history. Advice is welcome when it's wanted — but it never replaces listening.
-  4. ORGANIC CAPTURE (lowest). JAI quietly keeps track of six things for the user's own long-term reflection: sleep, exercise, diet, deep-work, emotional state, and the day's events. NEVER interrogate for these. Only when the user has paused, or a dimension comes up naturally, may you RARELY ask one light question about it — and only if it doesn't cut against the emotional moment. When in doubt, don't.
+  4. ORGANIC CAPTURE (lowest). JAI quietly keeps track of a few things for the user's own long-term reflection — the six built-in dimensions (sleep, exercise, diet, deep-work, emotional state, the day's events) plus anything in TRACKED_FIELDS the user personally asked you to follow. NEVER interrogate for these. Only when the user has paused, or one comes up naturally, may you RARELY ask one light question about it — and only if it doesn't cut against the emotional moment. When in doubt, don't.
 
 COVERAGE_TODAY (which of the six the user has already touched today — soft awareness ONLY, not a checklist to complete):
   Covered: {covered_today}
   Not yet mentioned: {uncovered_today}
+
+{tracked_fields_block}
 
 GOAL TOOLS (when to call them):
   - `add_goal(name)`: ONLY after the user explicitly confirms they want a goal tracked. When the user mentions a long-term aim ("I want to train for a marathon", "I'm going to focus on Jane Street prep"), FIRST ask in conversation whether to track it — do NOT call add_goal yet. If on a later turn they confirm ("yes please", "yeah track it"), THEN call add_goal. The 3-active cap is enforced server-side; if the call returns an error about the cap, tell the user they need to fulfill or remove a goal first.
@@ -175,6 +177,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
     from .morning_brief import get_daily_summaries
     from .notifications_prefs import get_user_tz
     from .profile import format_about_user, get_profile
+    from .tracking import list_tracked_fields
 
     # Bucket the bot's memory in the user's local day so "today" / "recent days"
     # line up with the locally-bucketed briefs and extraction rows.
@@ -211,6 +214,7 @@ def assemble_bot_context(user_id: UUID, now: Optional[datetime] = None) -> dict:
         "covered_today": sorted(covered),
         "uncovered_today": sorted(all_dims - covered),
         "about_user": format_about_user(get_profile(user_id)),
+        "tracked_fields": list_tracked_fields(user_id, status="active"),
     }
 
 
@@ -238,6 +242,18 @@ def _build_reply_messages(
     uncovered_display = (
         ", ".join(DIMENSION_DISPLAY[d] for d in ctx["uncovered_today"]) or "(all six covered)"
     )
+
+    tracked = ctx.get("tracked_fields") or []
+    if tracked:
+        names = ", ".join(t["name"] for t in tracked)
+        tracked_fields_block = (
+            "TRACKED_FIELDS (fields the user personally asked JAI to keep an eye on — "
+            "soft awareness ONLY, same gentle rules as ORGANIC CAPTURE):\n  " + names
+        )
+    else:
+        tracked_fields_block = (
+            "TRACKED_FIELDS: (none chosen yet — the user hasn't picked any custom fields to track)"
+        )
 
     graph_facts_block = ""
     if graph_synthesis and graph_synthesis.strip():
@@ -276,6 +292,7 @@ def _build_reply_messages(
         daily_summaries=daily_summaries_str,
         covered_today=covered_display,
         uncovered_today=uncovered_display,
+        tracked_fields_block=tracked_fields_block,
         graph_facts_block=graph_facts_block,
     )
 

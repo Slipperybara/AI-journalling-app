@@ -12,6 +12,7 @@ from uuid import UUID
 
 from neo4j import GraphDatabase
 
+from . import tracking_catalog
 from .core import settings
 
 _driver = None
@@ -62,7 +63,7 @@ def init_graph() -> None:
             ("Topic", "name"),
             ("Category", "name"),
             ("Goal", "name"),
-        ]
+        ] + tracking_catalog.index_specs()
         for label, prop in index_specs:
             idx_name = f"{label.lower()}_user_{prop}"
             session.run(

@@ -60,11 +60,25 @@ class ProductivityMetrics(BaseModel):
     friction_points: List[str] = Field(description="Obstacles, blockers, or sources of friction the user mentioned. Empty list if none.")
 
 
+class TrackedFieldReading(BaseModel):
+    field_key: str = Field(description="Exact key of a tracked field from the provided list. Do not invent keys.")
+    value: str = Field(description="Short reading for this field for the day, following that field's described format.")
+    note: Optional[str] = Field(default=None, description="Optional brief context grounded in what the user said. Null if none.")
+
+
 class JournalParserResponse(BaseModel):
     events: List[EventItem]
     emotions: EmotionalAnalysis
     health: HealthMetrics
     productivity: ProductivityMetrics
+    tracked_fields: List[TrackedFieldReading] = Field(
+        default_factory=list,
+        description=(
+            "Readings for the user's custom tracked fields — ONLY the ones actually "
+            "mentioned today, using ONLY keys from the provided tracked-fields list. "
+            "Empty list if none are mentioned or no list is provided."
+        ),
+    )
 
 
 class MessageCreate(BaseModel):

@@ -1,6 +1,7 @@
 """LLM-driven structured extraction over a day's chat messages."""
 from uuid import UUID
 
+from . import tracking as tracking_svc, tracking_catalog
 from .core import client
 from .models import HealthMetrics, JournalParserResponse, ProductivityMetrics
 
@@ -51,12 +52,47 @@ def parse_day_content(content: str, user_id: UUID) -> JournalParserResponse:
             "Goals themselves are user-managed — do not invent or propose new goal names."
         )
 
+    tracked_addendum = _tracked_fields_addendum(user_id)
+
     completion = client.beta.chat.completions.parse(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": PARSER_SYSTEM_BATCH + goals_addendum},
+            {"role": "system", "content": PARSER_SYSTEM_BATCH + goals_addendum + tracked_addendum},
             {"role": "user", "content": content},
         ],
         response_format=JournalParserResponse,
     )
     return completion.choices[0].message.parsed
+
+
+def _tracked_fields_addendum(user_id: UUID) -> str:
+    """Per-user extraction contract for the fields the user chose to track.
+
+    Preset fields → structured `tracked_fields` readings (one per mentioned
+    field, keyed by catalog key). Custom fields → captured as Events tagged with
+    the field name. Mirrors how `goals_addendum` steers extraction per user.
+    """
+    active = tracking_svc.list_tracked_fields(user_id, status="active")
+    presets = [f for f in active if f["kind"] == "preset" and tracking_catalog.is_preset_key(f["field_key"])]
+    customs = [f for f in active if f["kind"] == "custom"]
+
+    parts: list[str] = []
+    if presets:
+        lines = "\n".join(
+            f"  - {f['field_key']}: {tracking_catalog.BY_KEY[f['field_key']]['value_hint']}"
+            for f in presets
+        )
+        parts.append(
+            "\n\nThe user tracks these custom daily fields. For EACH one the user actually "
+            "mentioned today, add one entry to `tracked_fields` with `field_key` set to the "
+            "exact key below and `value` following its format. Do NOT emit entries for fields "
+            "not mentioned, and never use a key outside this list:\n" + lines
+        )
+    if customs:
+        names = ", ".join(f["name"] for f in customs)
+        parts.append(
+            f"\n\nThe user also wants to keep track of: {names}. When any of these comes up, "
+            "capture it as an event (title/description) and include its name in that event's "
+            "`tags` and `topics` so it stays retrievable. Do NOT add these to `tracked_fields`."
+        )
+    return "".join(parts)

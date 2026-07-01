@@ -9,6 +9,7 @@ import hashlib
 from datetime import date, timedelta
 from uuid import UUID
 
+from . import tracking_catalog
 from .db import connect
 from .graph_db import graph_connect, seed_reference_nodes_for_user
 
@@ -75,6 +76,13 @@ def sync_day_to_graph(day: str, user_id: UUID) -> dict:
             "WHERE user_id = %s AND status IN ('active','fulfilled')",
             (uid,),
         ).fetchall()
+        tracked_rows = conn.execute(
+            "SELECT field_key, value, note FROM tracked_field_values WHERE user_id = %s AND day = %s",
+            (uid, day),
+        ).fetchall()
+
+    # One node per field per day (last reading wins if the parser emitted dups).
+    tracked_by_key = {r["field_key"]: r for r in tracked_rows}
 
     topics_by_event: dict[str, list[str]] = {}
     for r in topic_rows:
@@ -93,8 +101,10 @@ def sync_day_to_graph(day: str, user_id: UUID) -> dict:
             _write_health(session, day, health, user_id)
         for event in events:
             _write_event(session, day, event, topics_by_event, goals_by_event, user_id)
+        for row in tracked_by_key.values():
+            _write_tracked_field(session, day, row, user_id)
 
-    return {"day": day, "user_id": uid, "events": len(events)}
+    return {"day": day, "user_id": uid, "events": len(events), "tracked_fields": len(tracked_by_key)}
 
 
 def ensure_day_chain(start_day: str, end_day: str, user_id: UUID) -> dict:
@@ -244,6 +254,31 @@ def _write_health(session, day: str, health, user_id: UUID) -> None:
             DETACH DELETE old
         """, user_id=uid, day=day)
         tx.run(query, params)
+        tx.commit()
+
+
+def _write_tracked_field(session, day: str, row, user_id: UUID) -> None:
+    """Project one preset tracked-field reading into its own labelled node.
+
+    `(Day)-[:TRACKED]->(:<Label> {user_id, value, note})`, DELETE-then-CREATE per
+    (day, label) so re-runs stay idempotent — same pattern as emotion/health. The
+    label is resolved from the catalog allowlist, so f-stringing it is safe."""
+    label = tracking_catalog.node_label_for(row["field_key"])
+    if not label:
+        return
+    uid = str(user_id)
+    with session.begin_transaction() as tx:
+        tx.run(
+            f"MATCH (d:Day {{user_id: $user_id, date: $day}})-[:TRACKED]->"
+            f"(old:{label} {{user_id: $user_id}}) DETACH DELETE old",
+            user_id=uid, day=day,
+        )
+        tx.run(
+            f"MATCH (d:Day {{user_id: $user_id, date: $day}}) "
+            f"CREATE (n:{label} {{user_id: $user_id, value: $value, note: $note}}) "
+            f"MERGE (d)-[:TRACKED]->(n)",
+            user_id=uid, day=day, value=row["value"], note=row["note"],
+        )
         tx.commit()
 
 

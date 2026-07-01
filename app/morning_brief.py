@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
 
-from . import analytics, goals as goals_svc
+from . import analytics, goals as goals_svc, tracking as tracking_svc
 from .bot import store_assistant_message
 from .core import client
 from .db import connect
@@ -151,6 +151,7 @@ def _gather_context(day: str, user_id: UUID) -> dict:
 
     active_goals = [g["name"] for g in goals_svc.list_goals(user_id, status="active")]
     goal_momentum = _fetch_goal_momentum(active_goals, user_id) if active_goals else {}
+    tracked_fields = [t["name"] for t in tracking_svc.list_tracked_fields(user_id, status="active")]
 
     yest_data_present = any([yest_emotion, yest_health, yest_productivity, yest_events])
     seven_data_present = any([seven_emotion, seven_health, seven_productivity])
@@ -172,6 +173,7 @@ def _gather_context(day: str, user_id: UUID) -> dict:
         "seven_day_productivity": [dict(r) for r in seven_productivity],
         "active_goals": active_goals,
         "goal_momentum": goal_momentum,
+        "tracked_fields": tracked_fields,
         "parse_log_status": parse_log["status"] if parse_log else None,
         "is_sparse_yesterday": not yest_data_present,
         "is_brand_new_user": not has_any_data,
@@ -257,8 +259,20 @@ def _detect_pattern(context: dict) -> str:
     return text
 
 
+def _pick_followup_field(context: dict) -> Optional[str]:
+    """Rotate deterministically through the user's tracked fields by day ordinal
+    so the brief's closing question varies day to day. None → fall back to the
+    generic 'How are you feeling today?'."""
+    tracked = context.get("tracked_fields") or []
+    if not tracked:
+        return None
+    ordinal = datetime.fromisoformat(context["day"]).date().toordinal()
+    return tracked[ordinal % len(tracked)]
+
+
 def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
     """Main gpt-4o call producing the user-facing brief."""
+    followup_field = _pick_followup_field(context)
     payload = {
         "yesterday_date": context["yesterday"],
         "is_sparse_yesterday": is_sparse,
@@ -271,6 +285,8 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
             {"name": name, "events_last_7d": context["goal_momentum"].get(name, 0)}
             for name in context["active_goals"]
         ],
+        "tracked_fields": context.get("tracked_fields", []),
+        "followup_field": followup_field,
     }
 
     response = client.chat.completions.create(
@@ -298,7 +314,11 @@ def _generate_brief(context: dict, pattern: str, is_sparse: bool) -> str:
                     "5. OPTIONAL: only if it arises naturally from the recap, offer ONE "
                     "small, caring suggestion for today. Skip it freely — do NOT force "
                     "advice. Better warm than prescriptive.\n"
-                    "6. End with the literal line: How are you feeling today?\n\n"
+                    "6. End with ONE warm question. If `followup_field` is non-empty, make it "
+                    "a gentle, natural question inviting them to share about that part of their "
+                    "day (e.g. 'Hydration' → 'Did you manage to drink enough water yesterday?'), "
+                    "caring and human, never clinical. Otherwise end with the literal line: "
+                    "How are you feeling today?\n\n"
                     "Style: 3-6 sentences total. Plain prose. No bullets, no markdown, "
                     "no headings, no emoji. Empathetic and unhurried, never preachy or "
                     "form-like. The optional steps are optional — lead with warmth and "

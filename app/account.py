@@ -33,6 +33,8 @@ _USER_TABLES = (
     "event_topics",
     "event_goal_contributions",
     "goals",
+    "tracked_fields",
+    "tracked_field_values",
 )
 
 

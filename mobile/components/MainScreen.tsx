@@ -13,8 +13,9 @@ import { ChatScreen } from './ChatScreen';
 import { ConversationsDrawer } from './ConversationsDrawer';
 import { DashboardScreen } from './DashboardScreen';
 import { TopBar } from './TopBar';
+import { TrackingScreen } from './TrackingScreen';
 
-type MainView = 'chat' | 'dashboard';
+type MainView = 'chat' | 'dashboard' | 'tracking';
 
 export function MainScreen() {
   const [view, setView] = useState<MainView>('chat');
@@ -88,6 +89,8 @@ export function MainScreen() {
               onConvCreated={setConvId}
               onRetrieval={(phase) => setBgMode(phase === 'start' ? 'cool' : 'warm')}
             />
+          ) : view === 'tracking' ? (
+            <TrackingScreen />
           ) : (
             <DashboardScreen />
           )}
@@ -117,6 +120,10 @@ export function MainScreen() {
         }}
         onOpenDashboard={() => {
           setView('dashboard');
+          setDrawerOpen(false);
+        }}
+        onOpenTracking={() => {
+          setView('tracking');
           setDrawerOpen(false);
         }}
       />

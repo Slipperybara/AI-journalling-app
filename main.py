@@ -8,7 +8,7 @@ from app.db import close_pool, init_db
 from app.graph_db import close as graph_close, init_graph
 from app.routers import (
     account, admin, agui, conversations, dashboard, devices, goals, messages,
-    notifications, profile, stream,
+    notifications, profile, stream, tracking,
 )
 
 
@@ -42,6 +42,7 @@ app.include_router(devices.router)
 app.include_router(dashboard.router)
 app.include_router(admin.router)
 app.include_router(goals.router)
+app.include_router(tracking.router)
 app.include_router(profile.router)
 app.include_router(notifications.router)
 app.include_router(account.router)

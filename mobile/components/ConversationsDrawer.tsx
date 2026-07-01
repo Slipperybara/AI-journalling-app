@@ -44,14 +44,16 @@ export function ConversationsDrawer({
   onSelect,
   onNew,
   onOpenDashboard,
+  onOpenTracking,
 }: {
   open: boolean;
   onClose: () => void;
   activeConvId: number | null;
-  view: 'chat' | 'dashboard';
+  view: 'chat' | 'dashboard' | 'tracking';
   onSelect: (id: number) => void;
   onNew: () => void;
   onOpenDashboard: () => void;
+  onOpenTracking: () => void;
 }) {
   const [convs, setConvs] = useState<Conversation[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -169,6 +171,23 @@ export function ConversationsDrawer({
               }}
             >
               Dashboard
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onOpenTracking}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 12 }}
+            android_ripple={{ color: colors.line }}
+          >
+            <Feather name="sliders" size={18} color={view === 'tracking' ? colors.ink : colors.inkSoft} />
+            <Text
+              style={{
+                fontFamily: fonts.serifMedium,
+                fontSize: 18,
+                color: view === 'tracking' ? colors.ink : colors.inkSoft,
+              }}
+            >
+              Tracking
             </Text>
           </Pressable>
 

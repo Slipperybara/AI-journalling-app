@@ -7,6 +7,7 @@ at the call site, not here.
 import json
 from uuid import UUID
 
+from . import tracking_catalog
 from .db import connect
 from .models import JournalParserResponse
 from .parser import is_health_meaningful, is_productivity_meaningful
@@ -73,3 +74,17 @@ def store_extractions(parsed: JournalParserResponse, day: str, user_id: UUID) ->
                         "INSERT INTO event_goal_contributions (user_id, day, event_title, goal_name) VALUES (%s, %s, %s, %s)",
                         (uid, day, ev.title, goal_name.strip()),
                     )
+
+        # Preset tracked-field readings. Filter to known catalog keys so a
+        # stray/hallucinated key never reaches the graph projection (which
+        # f-strings the label from the catalog).
+        for tf in (parsed.tracked_fields or []):
+            key = (tf.field_key or "").strip()
+            value = (tf.value or "").strip()
+            if not tracking_catalog.is_preset_key(key) or not value:
+                continue
+            cursor.execute(
+                "INSERT INTO tracked_field_values (user_id, day, field_key, value, note) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (uid, day, key, value, tf.note),
+            )

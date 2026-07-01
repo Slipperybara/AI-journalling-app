@@ -120,7 +120,7 @@ def test_context_drops_legacy_analytics_keys():
     assert "summary_7day" not in ctx
     assert set(ctx) == {
         "today_transcript", "recent_transcripts", "daily_summaries",
-        "covered_today", "uncovered_today", "about_user",
+        "covered_today", "uncovered_today", "about_user", "tracked_fields",
     }
 
 

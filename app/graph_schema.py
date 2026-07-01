@@ -14,6 +14,8 @@ no WHERE alias.user_id filter).
 """
 import re
 
+from . import tracking_catalog
+
 EMOTION_QUADRANTS = [
     "Peak Performance",
     "High-Stress",
@@ -43,7 +45,7 @@ DIET_QUALITIES = [
 USER_SCOPED_LABELS = (
     "Day", "EmotionState", "HealthState", "Event", "Topic", "Goal",
     "EmotionQuadrant", "SleepQuality", "ExerciseType", "DietQuality", "Category",
-)
+) + tracking_catalog.preset_node_labels()
 
 ONTOLOGY_SCHEMA = """
 Graph Ontology — ONLY use these labels and relationship types.
@@ -86,7 +88,7 @@ Relationship Types:
 - (Event)-[:INVOLVES]->(Topic)
 - (Topic)-[:BELONGS_TO]->(Category)
 - (Event)-[:CONTRIBUTES_TO]->(Goal)
-"""
+""" + tracking_catalog.ontology_block()
 
 
 def validate_user_id_scoping(query: str) -> str | None:

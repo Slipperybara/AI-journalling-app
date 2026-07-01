@@ -36,6 +36,8 @@ _TABLES_TO_RESET = (
     "event_topics",
     "event_goal_contributions",
     "goals",
+    "tracked_fields",
+    "tracked_field_values",
     "user_profile",
     "notification_prefs",
 )

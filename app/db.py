@@ -58,9 +58,10 @@ EXTRACTION_TABLES = (
     "events",
     "event_topics",
     "event_goal_contributions",
+    "tracked_field_values",
 )
-# `goals` is intentionally excluded — it's user-managed via chat/slash
-# commands and must survive day re-parses.
+# `goals` and `tracked_fields` are intentionally excluded — they're user-managed
+# (via chat/slash commands / the Tracking page) and must survive day re-parses.
 
 
 def init_db() -> None:
@@ -281,3 +282,36 @@ def init_db() -> None:
             )
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_goals_user_status ON goals(user_id, status)")
+
+        # What the user has asked JAI to track. Preset fields (kind='preset')
+        # come from tracking_catalog and each projects to its own Neo4j label;
+        # custom fields (kind='custom') ride the Event pipeline. User-managed —
+        # deliberately NOT in EXTRACTION_TABLES so it survives day re-parses
+        # (same reasoning as `goals`).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tracked_fields (
+                user_id UUID NOT NULL,
+                field_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'preset',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (user_id, field_key)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracked_fields_user_status ON tracked_fields(user_id, status)")
+
+        # Day-keyed readings of preset tracked fields, written by the nightly
+        # parser and projected into per-field Neo4j nodes. In EXTRACTION_TABLES
+        # so the batch clears the day's rows before re-storing.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tracked_field_values (
+                id BIGSERIAL PRIMARY KEY,
+                user_id UUID NOT NULL,
+                day TEXT NOT NULL,
+                field_key TEXT NOT NULL,
+                value TEXT,
+                note TEXT
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tracked_field_values_user_day ON tracked_field_values(user_id, day)")
